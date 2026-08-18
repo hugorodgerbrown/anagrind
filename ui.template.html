@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>anagrind</title>
+<meta name="description" content="Crossword anagram solver. Fodder in, real answers out.">
+<!-- Installable to the home screen. These are inert when the file is opened
+     directly, and the service worker only registers over http(s). -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="anagrind">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#16171a" media="(prefers-color-scheme: dark)">
+<style>
+/* System fonts only: no network request, so the page works fully offline and
+   matches whatever the phone already renders text in. */
+:root{
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --bg:#fbfbfa; --panel:#ffffff; --sunk:#f4f4f2; --rule:#e2e2de;
+  --text:#1a1a19; --dim:#6d6d68;
+  --ranked:#17795e; --unranked:#9a6600; --unattested:#8b8b85;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#16171a; --panel:#1e2024; --sunk:#111214; --rule:#2e3136;
+    --text:#ececea; --dim:#95958f;
+    --ranked:#4fc9a0; --unranked:#e2a343; --unattested:#84847e;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+  font-size:16px;line-height:1.5;-webkit-text-size-adjust:100%}
+.wrap{max-width:620px;margin:0 auto;padding:22px 18px 56px}
+
+header{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:20px}
+.mark{font-size:19px;font-weight:600;letter-spacing:-.01em}
+.count{font-family:var(--mono);font-size:13px;color:var(--dim)}
+.count b{color:var(--text);font-weight:600}
+.count.over b{color:var(--unranked)}
+
+label{display:block;font-size:12px;color:var(--dim);margin-bottom:5px}
+.field{margin-bottom:12px}
+input{width:100%;background:var(--panel);border:1px solid var(--rule);border-radius:8px;
+  color:var(--text);font-family:var(--mono);font-size:16px;padding:12px 13px;outline:none}
+input:focus{border-color:var(--ranked)}
+
+.tray{min-height:64px;margin:16px 0 6px;padding:12px;background:var(--sunk);
+  border-radius:8px;display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+.tray.empty::before{content:"Letters appear here as you type";font-size:13px;color:var(--dim)}
+.tile{width:28px;height:34px;display:grid;place-items:center;background:var(--panel);
+  border:1px solid var(--rule);border-radius:4px;font-family:var(--mono);font-size:15px;
+  text-transform:uppercase}
+.word{display:flex;flex-wrap:wrap;gap:4px}
+.gap{width:12px}
+.gap.hyphen{width:14px;height:34px;display:grid;place-items:center;color:var(--dim);
+  font-family:var(--mono)}
+.gap.hyphen::before{content:"\2013"}
+.hint{font-size:13px;color:var(--dim);min-height:19px;margin-bottom:14px}
+
+.band-head{display:flex;align-items:center;gap:8px;margin:22px 0 4px}
+.band-head span{font-size:12px;color:var(--dim);white-space:nowrap}
+.band-head .line{flex:1;height:1px;background:var(--rule)}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.b0 .dot{background:var(--ranked)}
+.b1 .dot{background:var(--unranked)}
+.b2 .dot{border:1px solid var(--unattested)}
+.why{font-size:12px;color:var(--dim);margin:0 0 2px}
+
+.answer,.sugg{width:100%;text-align:left;background:none;border:0;
+  border-bottom:1px solid var(--rule);color:inherit;font:inherit;padding:11px 2px;
+  cursor:pointer;display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.answer:active,.sugg:active{background:var(--sunk)}
+.answer[aria-current="true"]{background:var(--sunk)}
+.answer .txt{font-size:18px}
+.answer .num,.sugg .change{font-family:var(--mono);font-size:12px;color:var(--dim)}
+.sugg .gives{font-size:16px;color:var(--dim);white-space:nowrap}
+.sugg.sure .change{color:var(--ranked)}
+.sugg.sure .gives{color:var(--text)}
+
+.more{margin-top:20px;width:100%;background:none;border:1px solid var(--rule);
+  border-radius:8px;color:var(--dim);font:inherit;font-size:14px;padding:12px;cursor:pointer}
+.status{margin-top:20px;font-size:13px;color:var(--dim)}
+.fatal{margin-top:20px;padding:14px;border:1px solid var(--unranked);border-radius:8px}
+.fatal strong{display:block;color:var(--unranked);margin-bottom:5px}
+.fatal p{margin:0;font-size:13px;color:var(--dim)}
+.meta{margin-top:30px;padding-top:14px;border-top:1px solid var(--rule);
+  font-size:11px;line-height:1.8;color:var(--dim);white-space:pre-line}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="mark">anagrind</div>
+    <div class="count" id="count">&mdash;</div>
+  </header>
+
+  <div class="field">
+    <label for="fodder">Fodder</label>
+    <input id="fodder" placeholder="on a train, up to its" autocomplete="off"
+           autocapitalize="off" autocorrect="off" spellcheck="false">
+  </div>
+  <div class="field">
+    <label for="enum">Enumeration</label>
+    <input id="enum" placeholder="10,5" autocomplete="off" inputmode="text" spellcheck="false">
+  </div>
+
+  <div class="tray empty" id="tray" aria-live="off"></div>
+  <div class="hint" id="hint"></div>
+
+  <div id="results" aria-live="polite"></div>
+
+  <div class="meta" id="meta"></div>
+</div>
+
+<script>
+"use strict";
+const PAYLOAD = "__PAYLOAD__";
+
+/* ====================================================================== *
+ * Dictionary
+ * ====================================================================== */
+const FREQ = new Map();          // word -> zipf (built eagerly, 138 ms)
+const WORDS_BY = new Map();      // "len|key" -> [word]   (lazy, per length)
+const PHRASES_BY = new Map();    // "key|lengths" -> [..] (lazy, per total)
+const SYN = new Map();           // word -> Set of same-length synonyms
+const WORD_GROUPS = new Map();   // length -> unparsed block
+const PHRASE_GROUPS = new Map(); // total  -> unparsed block
+const builtLengths = new Set(), builtTotals = new Set();
+const MATRICES = new Map();      // length -> {words, rows} for the combo tier
+const RANKABLE = 1.0, COMBO_MIN = 2.3;
+
+const norm = s => s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+                   .toLowerCase().replace(/[^a-z]/g, "");
+const akey = s => norm(s).split("").sort().join("");
+
+function splitEntry(entry){
+  const parts = [], seps = [];
+  for (const tok of entry.split(/([\s\-]+)/)) {
+    if (!tok) continue;
+    if (/^[\s\-]+$/.test(tok)) { if (parts.length) seps.push(tok.includes("-") ? "-" : " "); }
+    else parts.push(norm(tok));
+  }
+  return {parts, seps: seps.slice(0, parts.length - 1)};
+}
+
+/** Anagram-key the words of one length. Deferred because this is the whole
+ *  cost of startup: 714 ms to key all 238k words, ~65 ms for the one length
+ *  a query actually touches. */
+function ensureLength(len){
+  if (builtLengths.has(len)) return;
+  builtLengths.add(len);
+  const block = WORD_GROUPS.get(len);
+  if (!block) return;
+  for (const w of block.split("\n")) {
+    const k = len + "|" + akey(w);
+    const bucket = WORDS_BY.get(k);
+    if (bucket) bucket.push(w); else WORDS_BY.set(k, [w]);
+  }
+}
+
+/** Index the phrases of one total letter count. A 15-letter query needs 7,156
+ *  of them, not all 112,672. */
+function ensureTotal(total){
+  if (builtTotals.has(total)) return;
+  builtTotals.add(total);
+  const block = PHRASE_GROUPS.get(total);
+  if (!block) return;
+  for (const line of block.split("\n")) {
+    const {parts, seps} = splitEntry(line);
+    if (parts.length < 2) continue;
+    const k = akey(parts.join("")) + "|" + parts.map(p => p.length).join(",");
+    const bucket = PHRASES_BY.get(k);
+    if (bucket) bucket.push({parts, seps}); else PHRASES_BY.set(k, [{parts, seps}]);
+  }
+}
+
+class UnsupportedBrowser extends Error {}
+
+async function loadDictionary(){
+  if (typeof DecompressionStream === "undefined")
+    throw new UnsupportedBrowser("needs Safari 16.4+, Chrome 80+ or Firefox 113+");
+
+  // Decoded in-page rather than via fetch("data:...").  The data: URL was
+  // faster on paper and broke in the browser: a sandboxed page's connect-src
+  // can reject it outright, and Response.body is null for data: URLs on some
+  // engines, so .pipeThrough threw. Nothing here leaves the page.
+  const binary = atob(PAYLOAD);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  const text = await new Response(stream).text();
+  const [wordBlob, freqBlob, phraseBlob, synBlob] = text.split("\x1e");
+
+  const wordGroups = wordBlob.split("\x1d");
+  const freqGroups = freqBlob.split("\x1d");
+  const ALPHA = "0123456789abcdefghijklmnopqrstuvwxyz";
+  let total = 0;
+  wordGroups.forEach((group, g) => {
+    const cut = group.indexOf("\n");
+    const len = +group.slice(0, cut);
+    WORD_GROUPS.set(len, group.slice(cut + 1));
+    // Frequencies are needed to score any answer, so these are not deferred —
+    // but they cost 138 ms without the anagram keying that costs 714 ms.
+    const words = group.slice(cut + 1).split("\n"), freqs = freqGroups[g];
+    for (let i = 0; i < words.length; i++)
+      FREQ.set(words[i], ALPHA.indexOf(freqs[i]) / 4);
+    total += words.length;
+  });
+
+  let phraseCount = 0;
+  for (const group of phraseBlob.split("\x1d")) {
+    const cut = group.indexOf("\n");
+    PHRASE_GROUPS.set(+group.slice(0, cut), group.slice(cut + 1));
+    phraseCount += group.length - cut;
+  }
+
+  for (const line of (synBlob || "").split("\n")) {
+    if (!line) continue;
+    const [word, ...rest] = line.split(" ");
+    SYN.set(word, new Set(rest));
+  }
+  return {words: total, groups: wordGroups.length};
+}
+
+/* ====================================================================== *
+ * Solver — mirrors solver.py. Python is the source of truth.
+ * ====================================================================== */
+function parseEnum(text){
+  const lengths = [], seps = [];
+  let pending = null;
+  for (const m of text.trim().replace(/[()]/g, "").matchAll(/(\d+)|([,\-\s]+)/g)) {
+    if (m[1]) { if (lengths.length) seps.push(pending || " "); lengths.push(+m[1]); pending = null; }
+    else pending = m[2].includes("-") ? "-" : " ";
+  }
+  if (!lengths.length) return null;
+  return {lengths, seps, total: lengths.reduce((a, b) => a + b, 0)};
+}
+
+const zipf  = w => FREQ.get(w) ?? 0;
+const score = ws => { const z = ws.map(zipf);
+  return Math.min(...z) * 2 + z.reduce((a, b) => a + b, 0) / z.length; };
+const band  = (ws, combo) => combo ? 2 : (Math.min(...ws.map(zipf)) < RANKABLE ? 1 : 0);
+
+function counts(letters){
+  const c = new Uint8Array(26);
+  for (const ch of letters) c[ch.charCodeAt(0) - 97]++;
+  return c;
+}
+
+/** Count matrix for one word length. Per length, like solver.py — the old
+ *  version scanned every word in the dictionary on every recursion step. */
+function matrixFor(len){
+  if (!MATRICES.has(len)) {
+    ensureLength(len);
+    const words = [], rows = [];
+    for (const [k, bucket] of WORDS_BY) {
+      if (+k.slice(0, k.indexOf("|")) !== len) continue;
+      for (const w of bucket) if (zipf(w) >= COMBO_MIN) { words.push(w); rows.push(counts(w)); }
+    }
+    MATRICES.set(len, {words, rows});
+  }
+  return MATRICES.get(len);
+}
+
+function* splitLetters(c, lengths){
+  if (lengths.length === 1) {
+    let key = "";
+    for (let i = 0; i < 26; i++) key += String.fromCharCode(97 + i).repeat(c[i]);
+    ensureLength(lengths[0]);
+    for (const w of WORDS_BY.get(lengths[0] + "|" + key) || [])
+      if (zipf(w) >= COMBO_MIN) yield [w];
+    return;
+  }
+  const {words, rows} = matrixFor(lengths[0]);
+  for (let i = 0; i < words.length; i++) {
+    const r = rows[i]; let fits = true;
+    for (let j = 0; j < 26; j++) if (r[j] > c[j]) { fits = false; break; }
+    if (!fits) continue;
+    const rest = new Uint8Array(26);
+    for (let j = 0; j < 26; j++) rest[j] = c[j] - r[j];
+    for (const tail of splitLetters(rest, lengths.slice(1))) yield [words[i], ...tail];
+  }
+}
+
+function solve(fodder, enumeration, includeUnattested){
+  const letters = norm(fodder), enu = enumeration;
+  const key = akey(letters), out = [], seen = new Set();
+
+  const add = (parts, seps, combo) => {
+    const id = parts.join(" ");
+    if (seen.has(id)) return;
+    seen.add(id);
+    const s = seps.length ? seps : enu.seps;
+    let text = parts[0];
+    for (let i = 1; i < parts.length; i++) text += (s[i - 1] || " ") + parts[i];
+    out.push({text, parts, band: band(parts, combo), score: score(parts)});
+  };
+
+  if (enu.lengths.length === 1) {
+    ensureLength(enu.lengths[0]);
+    for (const w of WORDS_BY.get(enu.lengths[0] + "|" + key) || []) add([w], [], false);
+  } else {
+    ensureTotal(letters.length);
+    let entries = PHRASES_BY.get(key + "|" + enu.lengths.join(",")) || [];
+    if (enu.seps.includes("-")) {
+      const exact = entries.filter(e => e.seps.join("") === enu.seps.join(""));
+      if (exact.length) entries = exact;
+    }
+    for (const e of entries) add(e.parts, e.seps, false);
+  }
+
+  if (includeUnattested && enu.lengths.length > 1) {
+    const order = enu.lengths.map((n, i) => i).sort((a, b) => enu.lengths[b] - enu.lengths[a]);
+    let n = 0;
+    for (const combo of splitLetters(counts(letters), order.map(i => enu.lengths[i]))) {
+      const parts = [];
+      order.forEach((slot, i) => parts[slot] = combo[i]);
+      add(parts, [], true);
+      if (++n >= 400) break;
+    }
+  }
+
+  out.sort((a, b) => a.band - b.band || b.score - a.score || a.text.localeCompare(b.text));
+  return out;
+}
+
+/* ====================================================================== *
+ * Diagnostics — mirrors the same functions in solver.py.
+ * ====================================================================== */
+const SWAP_MIN_ZIPF = 3.0;
+
+const BY_LEN = new Map(), KEYS_BY_LEN = new Map();
+
+function swappable(len){
+  if (!BY_LEN.has(len)) {
+    ensureLength(len);
+    const out = [];
+    for (const [k, bucket] of WORDS_BY)
+      if (+k.slice(0, k.indexOf("|")) === len)
+        for (const w of bucket) if (zipf(w) >= SWAP_MIN_ZIPF) out.push(w);
+    BY_LEN.set(len, out);
+  }
+  return BY_LEN.get(len);
+}
+
+function keysOfLength(len){
+  if (!KEYS_BY_LEN.has(len)) {
+    ensureLength(len);
+    const out = [];
+    for (const k of WORDS_BY.keys()) {
+      const bar = k.indexOf("|");
+      if (+k.slice(0, bar) === len) out.push(k.slice(bar + 1));
+    }
+    KEYS_BY_LEN.set(len, out);
+  }
+  return KEYS_BY_LEN.get(len);
+}
+
+/** Replace one word of the fodder with another of the same length.
+ *  A swap to a synonym of what the user typed is evidence about the mistake
+ *  itself, so those are marked confident rather than blended into a score. */
+function wordSwaps(fodder, enu, limit = 6){
+  const best = new Map();
+  for (const m of fodder.matchAll(/[^\W\d_]+/gu)) {
+    const orig = norm(m[0]);
+    if (!orig) continue;
+    const related = SYN.get(orig) || new Set();
+    for (const candidate of swappable(orig.length)) {
+      if (candidate === orig) continue;
+      const probe = fodder.slice(0, m.index) + candidate + fodder.slice(m.index + m[0].length);
+      for (const a of solve(probe, enu, false)) {
+        if (a.band !== 0) continue;
+        const confident = related.has(candidate);
+        const key = a.parts.join(" ");
+        const prior = best.get(key);
+        if (prior && (prior.confident || !confident)) continue;
+        best.set(key, {kind: "word", detail: `${orig} \u2192 ${candidate}`,
+                       fodder: probe, enumeration: null, confident, answers: [a]});
+      }
+    }
+  }
+  return [...best.values()]
+    .sort((x, y) => (x.confident === y.confident ? y.answers[0].score - x.answers[0].score
+                                                 : (x.confident ? -1 : 1)))
+    .slice(0, limit);
+}
+
+function alternativeShapes(fodder, limit = 6){
+  const total = norm(fodder).length, out = [];
+  (function walk(rem, prefix){
+    if (out.length >= limit) return;
+    if (!rem) {
+      const enu = {lengths: prefix, seps: prefix.slice(1).map(() => " "), total};
+      const answers = solve(fodder, enu, false);
+      if (answers.length) out.push({kind: "shape", detail: `(${prefix.join(",")})`,
+        fodder: null, enumeration: prefix.join(","), confident: false, answers});
+      return;
+    }
+    if (prefix.length >= 4) return;
+    for (let n = 1; n <= rem; n++) walk(rem - n, [...prefix, n]);
+  })(total, []);
+  return out;
+}
+
+/** Entries within a letter or two. Catches typos, never a misread word:
+ *  one substitution already costs a distance of 2. */
+function letterNearMisses(fodder, enu, maxDistance = 2, limit = 6){
+  if (enu.lengths.length !== 1) return [];
+  const have = counts(norm(fodder)), out = [];
+  for (let len = Math.max(1, enu.lengths[0] - maxDistance);
+       len <= enu.lengths[0] + maxDistance; len++) {
+    for (const key of keysOfLength(len)) {
+      const want = counts(key);
+      let add = "", drop = "", d = 0;
+      for (let i = 0; i < 26 && d <= maxDistance; i++) {
+        const diff = want[i] - have[i], ch = String.fromCharCode(65 + i);
+        if (diff > 0) { add += ch.repeat(diff) + " "; d += diff; }
+        else if (diff < 0) { drop += ch.repeat(-diff) + " "; d += -diff; }
+      }
+      if (d === 0 || d > maxDistance) continue;
+      const note = [add && "add " + add.trim(), drop && "drop " + drop.trim()]
+        .filter(Boolean).join(", ");
+      for (const w of WORDS_BY.get(len + "|" + key) || [])
+        out.push({kind: "letters", detail: w, fodder: null, enumeration: null,
+                  confident: false, note,
+                  answers: [{text: w, parts: [w], band: band([w], false), score: score([w])}]});
+    }
+  }
+  out.sort((a, b) => a.answers[0].band - b.answers[0].band || b.answers[0].score - a.answers[0].score);
+  return out.slice(0, limit);
+}
+
+function diagnose(fodder, enu, limit = 4){
+  return [...wordSwaps(fodder, enu, limit),
+          ...alternativeShapes(fodder, limit),
+          ...letterNearMisses(fodder, enu, 2, limit)];
+}
+
+/* ====================================================================== *
+ * Tile tray — the signature element
+ * ====================================================================== */
+const trayEl = document.getElementById("tray");
+let tiles = [];
+
+function renderTray(letters){
+  trayEl.classList.toggle("empty", !letters.length);
+  trayEl.textContent = "";
+  tiles = [...letters].map(ch => {
+    const t = document.createElement("div");
+    t.className = "tile"; t.textContent = ch; t.dataset.letter = ch;
+    trayEl.appendChild(t);
+    return t;
+  });
+}
+
+/** FLIP the existing tiles into the order of a chosen answer. */
+function arrangeInto(parts, seps){
+  if (!tiles.length) return;
+  const before = new Map(tiles.map(t => [t, t.getBoundingClientRect()]));
+  const pool = new Map();
+  for (const t of tiles) {
+    const list = pool.get(t.dataset.letter);
+    if (list) list.push(t); else pool.set(t.dataset.letter, [t]);
+  }
+  trayEl.textContent = "";
+  parts.forEach((word, i) => {
+    if (i) {
+      const gap = document.createElement("div");
+      gap.className = (seps[i - 1] === "-") ? "gap hyphen" : "gap";
+      trayEl.appendChild(gap);
+    }
+    // Each word gets its own box, so the break between words stays visible
+    // when the tray wraps — which it always does on a phone.
+    const group = document.createElement("div");
+    group.className = "word";
+    for (const ch of word) {
+      const tile = (pool.get(ch) || []).pop();
+      if (tile) group.appendChild(tile);
+    }
+    trayEl.appendChild(group);
+  });
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  for (const t of tiles) {
+    const a = before.get(t), b = t.getBoundingClientRect();
+    const dx = a.left - b.left, dy = a.top - b.top;
+    if (!dx && !dy) continue;
+    t.animate(
+      [{transform: `translate(${dx}px,${dy}px)`}, {transform: "translate(0,0)"}],
+      {duration: 460, easing: "cubic-bezier(.22,1,.36,1)"}
+    );
+  }
+}
+
+/* ====================================================================== *
+ * Wiring
+ * ====================================================================== */
+const fodderEl = document.getElementById("fodder");
+const enumEl   = document.getElementById("enum");
+const countEl  = document.getElementById("count");
+const hintEl   = document.getElementById("hint");
+const resultsEl= document.getElementById("results");
+const metaEl   = document.getElementById("meta");
+const BAND_NAME = ["Ranked", "Attested, unranked", "Unattested split"];
+const BAND_WHY = [
+  null,
+  "In the dictionary, but with no frequency evidence to rank it.",
+  "A legal split of the letters. No dictionary attests it."
+];
+let showUnattested = false, ready = false, seq = 0;
+const REMOTE = !PAYLOAD;   // Django serves the page with no payload embedded
+
+/** The only fork between the standalone build and the Django service. */
+async function getAnswers(fodder, enu, all){
+  if (!REMOTE) return solve(fodder, enu, all);
+  const q = new URLSearchParams({fodder, enum: enumText(enu), all: all ? "1" : ""});
+  const res = await fetch("/api/solve?" + q);
+  if (!res.ok) throw new Error(`solver returned ${res.status}`);
+  return (await res.json()).answers;
+}
+const enumText = enu => enu.lengths
+  .map((n, i) => (i ? (enu.seps[i - 1] === "-" ? "-" : ",") : "") + n).join("");
+
+async function refresh(){
+  if (!ready) return;
+  const letters = norm(fodderEl.value);
+  const enu = parseEnum(enumEl.value);
+
+  countEl.textContent = enu ? `${letters.length} / ${enu.total}` : `${letters.length}`;
+  countEl.classList.toggle("over", !!enu && letters.length !== enu.total);
+  if (enu) countEl.innerHTML = `<b>${letters.length}</b> / ${enu.total}`;
+
+  renderTray(letters);
+  resultsEl.textContent = "";
+
+  if (!letters.length || !enu) {
+    hintEl.textContent = letters.length ? "Add the answer shape, e.g. 10,5" : "";
+    return;
+  }
+  if (letters.length !== enu.total) {
+    const d = enu.total - letters.length;
+    hintEl.textContent = d > 0 ? `${d} letter${d > 1 ? "s" : ""} short of the enumeration`
+                               : `${-d} letter${-d > 1 ? "s" : ""} over the enumeration`;
+    return;
+  }
+  hintEl.textContent = "";
+
+  const mine = ++seq;
+  const t0 = performance.now();
+  let answers;
+  try {
+    answers = await getAnswers(fodderEl.value, enu, showUnattested);
+  } catch (err) {
+    if (mine === seq) hintEl.textContent = `Could not reach the solver: ${err.message}`;
+    return;
+  }
+  if (mine !== seq) return;              // a newer keystroke already won
+  render(answers, enu, performance.now() - t0);
+}
+
+function render(answers, enu, ms){
+  resultsEl.textContent = "";
+  if (!answers.length) {
+    const p = document.createElement("div");
+    p.className = "status empty-state";
+    p.textContent = showUnattested
+      ? "No arrangement of these letters makes words of that shape."
+      : "No attested answer fits these letters.";
+    resultsEl.appendChild(p);
+    if (!REMOTE) renderSuggestions(diagnose(fodderEl.value, enu));
+    else fetchSuggestions(enu);
+    if (!showUnattested && enu.lengths.length > 1) resultsEl.appendChild(moreButton());
+    return;
+  }
+  let current = null;
+  let group;
+  for (const a of answers) {
+    if (a.band !== current) {
+      current = a.band;
+      group = document.createElement("section");
+      group.className = "band b" + a.band;
+      const head = document.createElement("div");
+      head.className = "band-head";
+      head.innerHTML = `<i class="dot"></i><span>${BAND_NAME[a.band]}</span><i class="line"></i>`;
+      group.appendChild(head);
+      if (BAND_WHY[a.band]) {
+        const why = document.createElement("p");
+        why.className = "why"; why.textContent = BAND_WHY[a.band];
+        group.appendChild(why);
+      }
+      resultsEl.appendChild(group);
+    }
+    const btn = document.createElement("button");
+    btn.className = "answer";
+    btn.innerHTML = `<span class="txt"></span><span class="num"></span>`;
+    btn.querySelector(".txt").textContent = a.text;
+    btn.querySelector(".num").textContent = a.band === 0 ? a.score.toFixed(1) : "\u2014";
+    btn.addEventListener("click", () => {
+      for (const el of resultsEl.querySelectorAll(".answer")) el.setAttribute("aria-current", "false");
+      btn.setAttribute("aria-current", "true");
+      arrangeInto(a.parts, enu.seps);
+    });
+    group.appendChild(btn);
+  }
+  const status = document.createElement("div");
+  status.className = "status";
+  status.textContent = `${answers.length} shown in ${ms < 1 ? "<1" : Math.round(ms)} ms`;
+  resultsEl.appendChild(status);
+  if (!showUnattested && enu.lengths.length > 1) resultsEl.appendChild(moreButton());
+}
+
+const SUGG_GROUP = {
+  word:    ["Did you mean", "Other words that would also fit"],
+  shape:   ["These letters do fit another shape", null],
+  letters: ["Within a letter or two", null],
+};
+
+/** A failure the user can act on. Grouped by what kind of mistake it implies,
+ *  with the same rule as the answers: evidence first, never blended. */
+function renderSuggestions(suggestions){
+  if (!suggestions.length) return;
+  let heading = null;
+  for (const s of suggestions) {
+    const want = SUGG_GROUP[s.kind][s.kind === "word" && !s.confident ? 1 : 0];
+    if (want && want !== heading) {
+      heading = want;
+      const head = document.createElement("div");
+      head.className = "band-head";
+      head.innerHTML = `<span></span><i class="line"></i>`;
+      head.querySelector("span").textContent = want;
+      head.style.marginTop = "22px";
+      resultsEl.appendChild(head);
+    }
+    const btn = document.createElement("button");
+    btn.className = "sugg" + (s.confident ? " sure" : "");
+    btn.innerHTML = `<span class="change"></span><span class="gives"></span>`;
+    btn.querySelector(".change").textContent = s.note || s.detail;
+    btn.querySelector(".gives").textContent = s.answers[0].text;
+    btn.addEventListener("click", () => {
+      if (s.fodder !== null && s.fodder !== undefined) fodderEl.value = s.fodder;
+      if (s.enumeration) enumEl.value = s.enumeration;
+      showUnattested = false;
+      refresh();
+    });
+    resultsEl.appendChild(btn);
+  }
+}
+
+async function fetchSuggestions(enu){
+  try {
+    const q = new URLSearchParams({fodder: fodderEl.value, enum: enumText(enu)});
+    const res = await fetch("/api/diagnose?" + q);
+    if (res.ok) renderSuggestions((await res.json()).suggestions);
+  } catch (err) { /* the empty state is still correct without them */ }
+}
+
+function moreButton(){
+  const b = document.createElement("button");
+  b.className = "more";
+  b.textContent = "Show unattested splits";
+  b.addEventListener("click", () => { showUnattested = true; refresh(); });
+  return b;
+}
+
+let timer;
+for (const el of [fodderEl, enumEl]) {
+  el.addEventListener("input", () => {
+    showUnattested = false;
+    clearTimeout(timer);
+    timer = setTimeout(refresh, 90);
+  });
+}
+
+function fatal(heading, detail){
+  ready = false;
+  hintEl.textContent = "";
+  resultsEl.textContent = "";
+  const box = document.createElement("div");
+  box.className = "fatal";
+  const h = document.createElement("strong");
+  h.textContent = heading;
+  const p = document.createElement("p");
+  p.textContent = detail;
+  box.append(h, p);
+  resultsEl.appendChild(box);
+}
+
+(async () => {
+  const t0 = performance.now();
+  let source;
+  if (REMOTE) {
+    source = "solver.py over /api/solve";
+  } else {
+    hintEl.textContent = "Loading dictionary\u2026";
+    let stats;
+    try {
+      stats = await loadDictionary();
+    } catch (err) {
+      // Previously this rejected into a floating promise and the page sat on
+      // "Loading dictionary..." forever, so an old browser and a slow one
+      // looked identical.
+      if (err instanceof UnsupportedBrowser) {
+        fatal("This browser is too old to run anagrind",
+              `The dictionary is gzipped in the page, which ${err.message}. `
+              + "Updating the browser, or opening the file in a different one, will fix it.");
+      } else {
+        console.error("anagrind: dictionary load failed", err);
+        fatal("The dictionary did not load",
+              `${err && err.name || "Error"}: ${err && err.message || err}`
+              + " \u2014 the full error is in the browser console.");
+      }
+      return;
+    }
+    source = `${stats.words.toLocaleString()} words in ${stats.groups} length groups`
+           + ` \u00b7 ready in ${Math.round(performance.now() - t0)} ms`;
+  }
+  ready = true;
+  metaEl.textContent = source + "\n"
+    + "UKACD \u00a9 2009 J Ross Beresford, BSD-3-Clause \u00b7 WordNet \u00b7 wordfreq";
+  fodderEl.value = "on a train, up to its";
+  enumEl.value = "10,5";
+  refresh();
+
+  // Only when hosted. Opened as a local file there is nothing to cache and
+  // registration would throw.
+  if (location.protocol.startsWith("http") && "serviceWorker" in navigator) {
+    const hadController = !!navigator.serviceWorker.controller;
+
+    // A cache-first worker serves the old app until a new worker replaces it,
+    // and browsers throttle their own update checks — so ask on every launch.
+    navigator.serviceWorker.register("sw.js")
+      .then(reg => reg.update())
+      .catch(() => { /* the app still works without a worker */ });
+
+    // The new worker calls skipWaiting + claim, so it takes over this page
+    // mid-session while the page still shows what the old cache served.
+    // Reload once to pick it up; `hadController` keeps a first install (which
+    // is already current) from reloading for nothing.
+    let reloading = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadController || reloading) return;
+      reloading = true;
+      location.reload();
+    });
+  }
+})();
+</script>
+</body>
+</html>

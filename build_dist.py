@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Assemble dist/ — the folder Render publishes.
 
-    python3 build_dist.py           rebuild the page (stdlib only)
+    python3 build_dist.py           rebuild the page (stdlib only, works
+                                    from a fresh clone)
     python3 build_dist.py --icons   also regenerate the icons (needs Pillow)
 
 
@@ -16,7 +17,7 @@ files and this is a folder rather than the single HTML.
 """
 
 import hashlib
-import shutil
+import re
 import sys
 from pathlib import Path
 
@@ -48,6 +49,31 @@ def icon(size: int, maskable: bool = False):
     draw.text(((size - (right - left)) / 2 - left,
                (size - (bottom - top)) / 2 - top), "A", font=font, fill=INK)
     return img
+
+
+def read_payload() -> str:
+    """The compressed dictionary.
+
+    Normally payload.b64, written by build_payload.py. That file is a build
+    artifact and not committed, so on a fresh clone we recover it from the
+    committed dist/index.html — which already contains exactly this string.
+    That keeps the edit-the-UI loop to stdlib and one command, instead of a
+    pip install and a 30-second vocabulary build.
+    """
+    cached = HERE / "payload.b64"
+    if cached.exists():
+        return cached.read_text().strip()
+
+    built = DIST / "index.html"
+    if built.exists():
+        text = built.read_text()
+        match = re.search(r'const PAYLOAD = "([^"]*)";', text)
+        if match:
+            print("payload.b64 missing — recovered from dist/index.html")
+            return match.group(1)
+
+    raise SystemExit(
+        "No payload found. Run ./build.sh to build the dictionary from source.")
 
 
 MANIFEST = """{
@@ -100,8 +126,7 @@ def main() -> None:
     DIST.mkdir(exist_ok=True)
 
     html = (HERE / "ui.template.html").read_text()
-    payload = (HERE / "payload.b64").read_text().strip()
-    page = html.replace("__PAYLOAD__", payload)
+    page = html.replace("__PAYLOAD__", read_payload())
     (DIST / "index.html").write_text(page)
 
     build = hashlib.sha256(page.encode()).hexdigest()[:12]

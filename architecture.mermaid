@@ -1,0 +1,35 @@
+flowchart TD
+    A["Fodder<br/><i>'on a train, up to its'</i>"] --> N[normalise<br/>strip punctuation, accents, case]
+    B["Enumeration<br/><i>'10,5'</i>"] --> P[parse<br/>lengths + separators]
+    N --> V{"letter count<br/>== enum total?"}
+    P --> V
+    V -->|no| E["error: 15 letters, needs 14"]
+    V -->|yes| K["anagram key"]
+
+    K --> T1
+    P --> T1
+    T1{"one word<br/>or many?"}
+    T1 -->|one| W["<b>words_by_key</b>[len][key]<br/>O(1) · 238k words"]
+    T1 -->|many| F["<b>phrases_by_key</b>[key, pattern]<br/>O(1) · 112k phrases"]
+    F -.->|opt-in --all| C["numpy subset search<br/>O(dictionary) · 20-450ms"]
+
+    W --> BAND{"frequency evidence<br/>for every word?"}
+    F --> BAND
+    C --> B3
+
+    BAND -->|yes| B1["<b>● RANKED</b><br/>2·min(zipf) + mean(zipf)"]
+    BAND -->|no| B2["<b>◐ ATTESTED, UNRANKED</b><br/>no score shown"]
+    C --> B3["<b>○ UNATTESTED SPLIT</b>"]
+
+    B1 --> R["sort by band, then score<br/><i>bands never traded off</i>"]
+    B2 --> R
+    B3 --> R
+
+    SRC["<b>vocab.py</b><br/>UKACD 250k · attests, can't rank<br/>WordNet 64k · phrases<br/>wordfreq · ranks, can't attest"] -.-> W
+    SRC -.-> F
+
+    style F fill:#1f6feb,color:#fff
+    style B1 fill:#0f5132,color:#fff
+    style B2 fill:#664d03,color:#fff
+    style E fill:#842029,color:#fff
+    style SRC fill:#2d333b,color:#fff

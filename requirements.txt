@@ -1,0 +1,5 @@
+# Runtime only. wordfreq and nltk are build-time dependencies — they produce
+# .vocab-cache.pkl and are not imported when serving.
+Django==5.1.4
+numpy==2.2.1
+gunicorn==23.0.0

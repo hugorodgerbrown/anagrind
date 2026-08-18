@@ -22,7 +22,19 @@ build image, no pip install, no 30-second vocabulary build. New → Static Site 
 point at the repo. If you skip the blueprint, set publish directory to `dist`
 and leave the build command blank.
 
-To update: `python3 build_dist.py` locally, commit `dist/`, push.
+**Workflow.** `dist/` is committed, so it is both the source of truth for the
+deploy and the thing you edit toward.
+
+| You changed | Run | Then |
+|---|---|---|
+| nothing — first deploy | *(nothing)* | commit `dist/`, push |
+| `ui.template.html` | `python3 build_dist.py` | commit `dist/`, push |
+| the dictionary or `vocab.py` | `./build.sh` | commit `dist/`, push |
+
+`build_dist.py` needs only the standard library and works from a fresh clone:
+if `payload.b64` is absent it recovers the dictionary from the committed
+`dist/index.html`, which already contains it. Only a dictionary change needs
+`./build.sh`, which installs wordfreq and nltk and takes about a minute.
 
 Then, on the phone:
 
