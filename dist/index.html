@@ -54,9 +54,18 @@ input:focus{border-color:var(--ranked)}
 .field.err label{color:var(--err)}
 .hint.err{color:var(--err)}
 
+.tabs{display:flex;gap:2px;margin-bottom:18px;border-bottom:1px solid var(--rule)}
+.tab{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);
+  font:inherit;font-size:13px;padding:7px 11px;margin-bottom:-1px;cursor:pointer}
+.tab[aria-selected="true"]{color:var(--text);border-bottom-color:var(--ranked)}
+
+/* A square nobody has filled in yet. Same box as a tile so the row does not
+   reflow when a letter lands in it. */
+.tile.blank{background:transparent;border-style:dashed;color:var(--dim)}
+
 .tray{min-height:64px;margin:16px 0 6px;padding:12px;background:var(--sunk);
   border-radius:8px;display:flex;flex-wrap:wrap;align-items:center;gap:4px}
-.tray.empty::before{content:"Letters appear here as you type";font-size:13px;color:var(--dim)}
+.tray.empty::before{content:attr(data-empty);font-size:13px;color:var(--dim)}
 .tile{width:28px;height:34px;display:grid;place-items:center;background:var(--panel);
   border:1px solid var(--rule);border-radius:4px;font-family:var(--mono);font-size:15px;
   text-transform:uppercase}
@@ -105,18 +114,29 @@ input:focus{border-color:var(--ranked)}
     <div class="count" id="count">&mdash;</div>
   </header>
 
-  <div class="field">
+  <div class="tabs" role="tablist">
+    <button class="tab" id="tab-anagram" role="tab" aria-selected="true">Anagrind</button>
+    <button class="tab" id="tab-finder" role="tab" aria-selected="false">Word finder</button>
+  </div>
+
+  <div class="field" id="fodder-field">
     <label for="fodder">Fodder</label>
     <input id="fodder" placeholder="on a train, up to its" autocomplete="off"
            autocapitalize="off" autocorrect="off" spellcheck="false">
   </div>
-  <div class="field">
+  <div class="field" id="pattern-field" hidden>
+    <label for="pattern">Pattern</label>
+    <input id="pattern" placeholder="r_c_n_l_" autocomplete="off"
+           autocapitalize="off" autocorrect="off" spellcheck="false">
+  </div>
+  <div class="field" id="enum-field">
     <label for="enum">Enumeration</label>
     <input id="enum" placeholder="10,5" autocomplete="off" inputmode="text" spellcheck="false"
            aria-describedby="hint">
   </div>
 
-  <div class="tray empty" id="tray" aria-live="off"></div>
+  <div class="tray empty" id="tray" aria-live="off"
+       data-empty="Letters appear here as you type"></div>
   <div class="hint" id="hint"></div>
 
   <div id="results" aria-live="polite"></div>
@@ -338,6 +358,96 @@ function solve(fodder, enumeration, includeUnattested){
 }
 
 /* ====================================================================== *
+ * Word finder — mirrors Pattern / find_pattern in solver.py.
+ *
+ * The other way into a crossword: a half-filled grid entry rather than fodder
+ * to rearrange. A blank is a space, an underscore or a question mark; a comma
+ * or hyphen is a word break, which is what makes the enumeration derived
+ * rather than typed.
+ * ====================================================================== */
+const BLANK = ".";
+const BLANK_CHARS = " _?";
+
+/** 't_k_,o_t' -> {words: ["t.k.", "o.t"], seps: [" "]} */
+function parsePattern(text){
+  const words = [], seps = [];
+  let current = "", pending = null;
+  const clean = text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  for (const ch of clean) {
+    if (ch === "," || ch === "-") {
+      if (current) {
+        if (words.length) seps.push(pending || " ");
+        words.push(current); current = ""; pending = ch === "-" ? "-" : " ";
+      }
+      continue;
+    }
+    if (/[a-z]/.test(ch)) current += ch;
+    else if (BLANK_CHARS.includes(ch)) current += BLANK;
+  }
+  if (current) { if (words.length) seps.push(pending || " "); words.push(current); }
+  const lengths = words.map(w => w.length);
+  return {words, seps,
+          total: lengths.reduce((a, b) => a + b, 0),
+          enu: lengths.length ? {lengths, seps, total: lengths.reduce((a, b) => a + b, 0)} : null,
+          open: words.length > 0 && words.every(w => [...w].every(c => c === BLANK))};
+}
+
+const slotMatches = (slot, word) => word.length === slot.length
+  && [...slot].every((c, i) => c === BLANK || c === word[i]);
+
+/** One word's slot as a regex, for scanning a whole length group at once. */
+const slotRegex = slot =>
+  new RegExp("^" + [...slot].map(c => c === BLANK ? "[a-z]" : c).join("") + "$", "gm");
+
+function findPattern(pattern, limit = 0){
+  const pat = typeof pattern === "string" ? parsePattern(pattern) : pattern;
+  if (!pat.words.length) return [];
+  const enu = pat.enu, out = [], seen = new Set();
+
+  const add = (parts, seps) => {
+    const id = parts.join(" ");
+    if (seen.has(id)) return;
+    seen.add(id);
+    const s = seps.length ? seps : enu.seps;
+    let text = parts[0];
+    for (let i = 1; i < parts.length; i++) text += (s[i - 1] || " ") + parts[i];
+    // seps travels with the answer so the tray can draw the hyphen the entry
+    // actually has, not the comma the solver typed out of habit.
+    out.push({text, parts, seps: s, band: band(parts, false), score: score(parts)});
+  };
+
+  if (pat.words.length === 1) {
+    // Scanned straight off the unparsed block: no anagram keying is needed to
+    // answer a positional question, and the group is already one string.
+    const block = WORD_GROUPS.get(pat.words[0].length);
+    for (const w of (block || "").match(slotRegex(pat.words[0])) || []) add([w], []);
+  } else {
+    const block = PHRASE_GROUPS.get(pat.total);
+    let matched = [];
+    for (const line of (block || "").split("\n")) {
+      const {parts, seps} = splitEntry(line);
+      if (parts.length !== pat.words.length) continue;
+      if (!parts.every((w, i) => slotMatches(pat.words[i], w))) continue;
+      matched.push({parts, seps});
+    }
+    // Same rule as solve(), and the same order as find_pattern in solver.py:
+    // 'take out' and 'take-out' dedupe to one answer, so which one survives
+    // has to be decided rather than left to whichever came first.
+    if (enu.seps.includes("-")) {
+      const exact = matched.filter(e => e.seps.join("") === enu.seps.join(""));
+      if (exact.length) matched = exact;
+    }
+    const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+    matched.sort((a, b) => cmp(a.seps.join(""), b.seps.join("")) ||
+                           cmp(a.parts.join(" "), b.parts.join(" ")));
+    for (const e of matched) add(e.parts, e.seps);
+  }
+
+  out.sort((a, b) => a.band - b.band || b.score - a.score || a.text.localeCompare(b.text));
+  return limit ? out.slice(0, limit) : out;
+}
+
+/* ====================================================================== *
  * Diagnostics — mirrors the same functions in solver.py.
  * ====================================================================== */
 const SWAP_MIN_ZIPF = 3.0;
@@ -492,9 +602,16 @@ function arrangeInto(parts, seps){
     }
     trayEl.appendChild(group);
   });
+  flip(before);
+}
+
+/** The second half of FLIP: play every tile back from where it used to be. */
+function flip(before){
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   for (const t of tiles) {
-    const a = before.get(t), b = t.getBoundingClientRect();
+    const a = before.get(t);
+    if (!a) continue;
+    const b = t.getBoundingClientRect();
     const dx = a.left - b.left, dy = a.top - b.top;
     if (!dx && !dy) continue;
     t.animate(
@@ -502,6 +619,61 @@ function arrangeInto(parts, seps){
       {duration: 460, easing: "cubic-bezier(.22,1,.36,1)"}
     );
   }
+}
+
+/** The tray in word finder mode: one square per position, blanks included,
+ *  already grouped by the word breaks the pattern states. */
+function renderPattern(pat){
+  trayEl.classList.toggle("empty", !pat.total);
+  trayEl.textContent = "";
+  tiles = [];
+  pat.words.forEach((slot, i) => {
+    if (i) {
+      const gap = document.createElement("div");
+      gap.className = (pat.seps[i - 1] === "-") ? "gap hyphen" : "gap";
+      trayEl.appendChild(gap);
+    }
+    const group = document.createElement("div");
+    group.className = "word";
+    for (const ch of slot) {
+      const tile = document.createElement("div");
+      const blank = ch === BLANK;
+      tile.className = blank ? "tile blank" : "tile";
+      tile.textContent = blank ? "" : ch;
+      tile.dataset.letter = blank ? "" : ch;
+      group.appendChild(tile);
+      tiles.push(tile);
+    }
+    trayEl.appendChild(group);
+  });
+}
+
+/** Fill the blanks with a chosen answer. Tiles are matched by position, not by
+ *  letter: in this mode the squares never move, they only stop being empty. */
+function revealInto(parts, seps){
+  if (!tiles.length) return;
+  const before = new Map(tiles.map(t => [t, t.getBoundingClientRect()]));
+  const queue = tiles.slice();
+  trayEl.textContent = "";
+  parts.forEach((word, i) => {
+    if (i) {
+      const gap = document.createElement("div");
+      gap.className = (seps[i - 1] === "-") ? "gap hyphen" : "gap";
+      trayEl.appendChild(gap);
+    }
+    const group = document.createElement("div");
+    group.className = "word";
+    for (const ch of word) {
+      const tile = queue.shift();
+      if (!tile) break;
+      tile.classList.remove("blank");
+      tile.textContent = ch;
+      tile.dataset.letter = ch;
+      group.appendChild(tile);
+    }
+    trayEl.appendChild(group);
+  });
+  flip(before);
 }
 
 /* ====================================================================== *
@@ -532,6 +704,46 @@ const REMOTE = !PAYLOAD;   // Django serves the page with no payload embedded
 // merely invisible would keep paying for a thing nobody sees.
 const DIAGNOSTICS = false;
 
+// Two ways into a crossword. Anagram mode rearranges fodder you already have;
+// word finder fills a half-known grid entry. They share the tray, the bands and
+// the render path — only the search and the shape of the input differ.
+const tabs = {anagram: document.getElementById("tab-anagram"),
+              finder:  document.getElementById("tab-finder")};
+const patternEl = document.getElementById("pattern");
+// Two inputs, not one input wearing two labels. Fodder and a pattern are
+// different notations — a space is punctuation in one and a square in the
+// other — so they get their own fields, and neither can bleed into the other.
+const FIELDS = {
+  anagram: {input: fodderEl,  box: document.getElementById("fodder-field"),
+            empty: "Letters appear here as you type"},
+  finder:  {input: patternEl, box: document.getElementById("pattern-field"),
+            empty: "Squares appear here as you type"},
+};
+let mode = "anagram";
+
+// A pattern can match thousands where an anagram matches one, so this is
+// capped — and says so when it bites, rather than passing a truncated list off
+// as the whole answer.
+const FINDER_LIMIT = 200;
+
+function setMode(next){
+  if (next === mode) return;
+  mode = next;
+  for (const [name, tab] of Object.entries(tabs))
+    tab.setAttribute("aria-selected", String(name === mode));
+  for (const [name, field] of Object.entries(FIELDS))
+    field.box.hidden = name !== mode;
+  trayEl.dataset.empty = FIELDS[mode].empty;
+  // The pattern states its own shape, so there is nothing to enter here.
+  enumField().hidden = mode === "finder";
+  enumField().classList.remove("err");
+  hintEl.classList.remove("err");
+  showUnattested = false;
+  resultsEl.textContent = "";
+  refresh();
+  FIELDS[mode].input.focus();
+}
+
 // The enumeration follows the fodder's letter count until the solver types a
 // shape of their own — then it is theirs, and a later fodder edit leaves it
 // alone and shows the disagreement instead. Emptying the field hands it back,
@@ -557,8 +769,57 @@ async function getAnswers(fodder, enu, all){
 const enumText = enu => enu.lengths
   .map((n, i) => (i ? (enu.seps[i - 1] === "-" ? "-" : ",") : "") + n).join("");
 
+/** The same fork, for word finder. */
+async function getMatches(pat, raw){
+  if (!REMOTE) return findPattern(pat, FINDER_LIMIT);
+  const q = new URLSearchParams({pattern: raw, limit: String(FINDER_LIMIT)});
+  const res = await fetch("/api/find?" + q);
+  if (!res.ok) throw new Error(`solver returned ${res.status}`);
+  return (await res.json()).answers;
+}
+
 async function refresh(){
   if (!ready) return;
+  return mode === "finder" ? refreshFinder() : refreshAnagram();
+}
+
+/** Word finder: the pattern is the whole query — letters, gaps and, through
+ *  its separators, the enumeration. Nothing to cross-check, so no error state
+ *  and no count to disagree with. */
+async function refreshFinder(){
+  const raw = patternEl.value;
+  const pat = parsePattern(raw);
+
+  countEl.classList.remove("over");
+  countEl.textContent = pat.total ? String(pat.total) : "\u2014";
+  renderPattern(pat);
+  resultsEl.textContent = "";
+  hintEl.classList.remove("err");
+
+  if (!pat.total) { hintEl.textContent = ""; return; }
+  if (pat.open) {
+    // Every square blank matches the whole dictionary, which is not an answer.
+    hintEl.textContent = "Add at least one known letter";
+    return;
+  }
+  hintEl.textContent = "";
+
+  const mine = ++seq;
+  const t0 = performance.now();
+  let answers;
+  try {
+    answers = await getMatches(pat, raw);
+  } catch (err) {
+    if (mine === seq) hintEl.textContent = `Could not reach the solver: ${err.message}`;
+    return;
+  }
+  if (mine !== seq) return;
+  render(answers, pat.enu, performance.now() - t0);
+  if (answers.length >= FINDER_LIMIT)
+    hintEl.textContent = `Showing the first ${FINDER_LIMIT}. Fill in another square to narrow it.`;
+}
+
+async function refreshAnagram(){
   const letters = norm(fodderEl.value);
   const enu = parseEnum(enumEl.value);
 
@@ -603,15 +864,18 @@ function render(answers, enu, ms){
   if (!answers.length) {
     const p = document.createElement("div");
     p.className = "status empty-state";
-    p.textContent = showUnattested
-      ? "No arrangement of these letters makes words of that shape."
-      : "No attested answer fits these letters.";
+    p.textContent = mode === "finder"
+      ? "No attested entry fits that pattern."
+      : showUnattested
+        ? "No arrangement of these letters makes words of that shape."
+        : "No attested answer fits these letters.";
     resultsEl.appendChild(p);
     if (DIAGNOSTICS) {
       if (!REMOTE) renderSuggestions(diagnose(fodderEl.value, enu));
       else fetchSuggestions(enu);
     }
-    if (!showUnattested && enu.lengths.length > 1) resultsEl.appendChild(moreButton());
+    if (mode !== "finder" && !showUnattested && enu.lengths.length > 1)
+      resultsEl.appendChild(moreButton());
     return;
   }
   let current = null;
@@ -640,7 +904,8 @@ function render(answers, enu, ms){
     btn.addEventListener("click", () => {
       for (const el of resultsEl.querySelectorAll(".answer")) el.setAttribute("aria-current", "false");
       btn.setAttribute("aria-current", "true");
-      arrangeInto(a.parts, enu.seps);
+      if (mode === "finder") revealInto(a.parts, a.seps || enu.seps);
+      else arrangeInto(a.parts, enu.seps);
     });
     group.appendChild(btn);
   }
@@ -648,7 +913,8 @@ function render(answers, enu, ms){
   status.className = "status";
   status.textContent = `${answers.length} shown in ${ms < 1 ? "<1" : Math.round(ms)} ms`;
   resultsEl.appendChild(status);
-  if (!showUnattested && enu.lengths.length > 1) resultsEl.appendChild(moreButton());
+  if (mode !== "finder" && !showUnattested && enu.lengths.length > 1)
+    resultsEl.appendChild(moreButton());
 }
 
 const SUGG_GROUP = {
@@ -712,6 +978,9 @@ function queue(){
   timer = setTimeout(refresh, 90);
 }
 fodderEl.addEventListener("input", () => { trackFodder(); queue(); });
+patternEl.addEventListener("input", queue);
+for (const [name, tab] of Object.entries(tabs))
+  tab.addEventListener("click", () => setMode(name));
 enumEl.addEventListener("input", () => {
   enumOwned = enumEl.value.trim() !== "";
   queue();

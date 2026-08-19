@@ -39,7 +39,8 @@ django.setup()
 # Loaded once at import and shared across threads. Index is read-only after
 # construction, so no locking is needed.
 import vocab  # noqa: E402
-from solver import BAND_LABEL, diagnose, solve  # noqa: E402
+from solver import (  # noqa: E402
+    BAND_LABEL, diagnose, find_pattern, parse_pattern, solve, split_entry)
 
 INDEX = vocab.load()
 PAGE = (HERE / "ui.template.html").read_text().replace("__PAYLOAD__", "")
@@ -68,6 +69,30 @@ def api_solve(request):
     }, json_dumps_params={"ensure_ascii": False})
 
 
+def api_find(request):
+    """Word finder: entries whose letters fit a pattern like 'r_c_n_l_'.
+
+    The pattern carries its own enumeration in its separators, so unlike
+    /api/solve there is no second parameter to disagree with it.
+    """
+    pattern = parse_pattern(request.GET.get("pattern", ""))
+    try:
+        limit = min(int(request.GET.get("limit", 25)), 500)
+    except ValueError:
+        return JsonResponse({"error": "limit must be a number"}, status=400)
+    answers = find_pattern(pattern, INDEX, limit=limit)
+    return JsonResponse({
+        "enumeration": str(pattern.enumeration) if pattern.words else "",
+        "answers": [
+            {"text": a.text, "parts": list(a.words),
+             "seps": list(split_entry(a.text)[1]),
+             "band": a.band, "band_label": a.band_label,
+             "tier": a.tier, "score": a.score}
+            for a in answers
+        ]
+    }, json_dumps_params={"ensure_ascii": False})
+
+
 def api_diagnose(request):
     """What would have worked. Only meaningful when /api/solve came back empty."""
     try:
@@ -88,6 +113,7 @@ def api_diagnose(request):
 
 
 urlpatterns = [path("", home), path("api/solve", api_solve),
+               path("api/find", api_find),
                path("api/diagnose", api_diagnose)]
 
 # gunicorn web:application

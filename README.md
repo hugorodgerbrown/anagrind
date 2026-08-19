@@ -16,17 +16,25 @@ $ ./solve.py "on a train, up to its" "10,5"
 `dist/` is an installable web app: manifest, icons, and a service worker that
 precaches everything. It is 2.2 MB of static files with no backend.
 
-**Testing it locally.** `.claude/launch.json` serves `dist/` on
+**Testing it locally.** `devserver.py` serves `dist/` on
 <http://localhost:8137>, which is a secure origin, so the service worker
-registers exactly as it does in production:
+registers exactly as it does in production. `.claude/launch.json` runs it.
 
 ```bash
-python3 -m http.server 8137 --directory dist
+python3 devserver.py
 ```
 
 Load it once, then stop the server and reload: the app should still solve.
 That is the whole claim, and it is the only way to check it — a service worker
 never registers over `file://`.
+
+It is a dozen lines longer than `python3 -m http.server` because that one is
+quietly wrong here. It sends no `Cache-Control`, so Chromium heuristically
+caches `index.html`, and the worker's `addAll()` then fills a **freshly named**
+cache with the **previous** build: the page is stale, the cache name says it is
+current, and nothing in the browser admits it. That cost an hour of chasing a
+feature that was already shipped and looked missing. `render.yaml` sends
+`no-cache` for exactly this reason, and now so does the dev server.
 
 **Deploying to Render.** `dist/` is committed and `render.yaml` publishes it with
 an empty build command, so the deploy has nothing to break: no Python on the
@@ -83,6 +91,42 @@ learn about its own replacement.
 iOS ignores manifest icons for Add to Home Screen and needs a real
 `apple-touch-icon` file, which is why this ships as a folder and not as the
 single HTML.
+
+## Two ways in
+
+A solver arrives at a crossword from one of two directions, so the app has two
+modes, chosen by the tabs at the top.
+
+**Anagrind** is the one above: fodder in, real answers out.
+
+**Word finder** is the other one — a half-filled grid entry rather than letters
+to rearrange. Type what you have and leave the rest blank:
+
+```
+r_c_n_l_        ->  recently
+s_t_r_t_o_,p_i_t ->  saturation point
+t_k_-o_t        ->  take-out
+```
+
+A blank is a **space, an underscore or a question mark**, whichever your hands
+reach for; all three mean one unknown letter. A **comma or hyphen is a word
+break**, and that is the whole reason there is no enumeration field in this
+mode: `t_k_,o_t` already says (4,3) and `t_k_-o_t` already says 4-3. An
+enumeration typed next to a pattern could only ever agree with it or be wrong.
+
+Space is a blank rather than a word break because in this mode you are filling
+in squares, and the break between words is what the comma is for.
+
+The match is positional, which is the entire point: `_r_c_n_l` finds `cracknel`
+and not `recently`. Bands and ordering are the same as the anagram side —
+evidence first, never traded off against score — but there is no unattested
+tier, because a pattern with no match has no legal split to fall back on, only
+a wrong grid. Results are capped at 200, and the app says so when the cap
+bites rather than passing a truncated list off as the whole answer.
+
+The two modes have **separate inputs**. Fodder and a pattern are different
+notations — a space is punctuation in one and a square in the other — so
+switching tabs cannot bleed one into the other.
 
 ## Two ways to run it
 
@@ -148,6 +192,7 @@ node verify_load.js       # the real loadDictionary(), end to end
 node verify_browser.js    # headless Chromium, bare and under CSP
 node verify_deploy.js     # serves dist/: offline install, and redeploy reaching a user
 python3 verify_pwa.py     # the same two claims, against a server that is actually dead
+python3 devserver.py      # serve dist/ locally with production headers
 
 python3 build_payload.py  # regenerate payload.b64 after changing vocab.py
 python3 -c "open('anagrind.html','w').write(open('ui.template.html').read().replace('__PAYLOAD__', open('payload.b64').read().strip()))"

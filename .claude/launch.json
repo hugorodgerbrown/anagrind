@@ -4,7 +4,10 @@
     {
       "name": "anagrind",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8137", "--directory", "dist"],
+      "runtimeArgs": [
+        "devserver.py",
+        "8137"
+      ],
       "port": 8137,
       "url": "http://localhost:8137"
     }
