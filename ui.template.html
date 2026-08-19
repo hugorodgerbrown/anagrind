@@ -1087,6 +1087,31 @@ patternEl.addEventListener("input", () => {
   queue();
 });
 
+// Backspace works on the square you are on, not the gap behind it. The caret
+// is drawn as a highlighted square, so that square is what a delete has to
+// mean — a text input's own backspace takes the character before the caret,
+// which is the square to the left of the one you are looking at.
+patternEl.addEventListener("keydown", event => {
+  if (event.key !== "Backspace") return;
+  if (patternEl.selectionStart !== patternEl.selectionEnd) return;  // a real selection deletes itself
+  event.preventDefault();
+
+  const value = patternEl.value;
+  const cells = layout(value);
+  const here = squareCount(layout(value.slice(0, patternEl.selectionStart)));
+  // Past the last square there is nothing under the caret, so take the one
+  // behind it — which is what typing then deleting should feel like.
+  const at = textIndexOfSquare(cells, here) ?? textIndexOfSquare(cells, here - 1);
+  if (at === null) return;
+
+  patternEl.value = value.slice(0, at) + value.slice(at + 1);
+  const target = Math.max(0, here - 1);       // and the first square stays the first
+  const landing = textIndexOfSquare(layout(patternEl.value), target);
+  const pos = landing === null ? patternEl.value.length : landing;
+  patternEl.setSelectionRange(pos, pos);
+  patternEl.dispatchEvent(new Event("input", {bubbles: true}));
+});
+
 // The caret is drawn, so anything that moves it has to redraw it.
 for (const event of ["keyup", "click", "focus", "blur", "select"])
   patternEl.addEventListener(event, renderGrid);
