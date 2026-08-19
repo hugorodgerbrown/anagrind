@@ -62,6 +62,18 @@ URL that was never cached falls back to the app itself rather than the browser's
 offline error, since every URL here is the same single page. The offline reload
 is asserted in the browser tests.
 
+`verify_pwa.py` is the check with teeth here. It shuts the origin's server down
+rather than asking the browser to pretend, because the first version of it used
+offline emulation, the emulation silently failed to apply, and every assertion
+passed against a live server — including one for an asset that was never
+cached. Its first assertion is now a control: a fetch that must be unreachable.
+If the control ever passes, nothing below it means anything.
+
+That is how `icon-180.png` was caught. The page requests it on every load as
+its apple-touch-icon, it was the only asset the worker did not precache, and
+`precached >= 6` was true the whole time. It needs `pip install playwright &&
+playwright install chromium`.
+
 The worker is cache-first, which means a stale cache would serve the old app
 forever. Its cache name carries a hash of the built page, so a deploy that
 changes anything invalidates it automatically — and `render.yaml` sends
@@ -135,6 +147,7 @@ node verify_ui.js         # 15 browser/Python parity checks
 node verify_load.js       # the real loadDictionary(), end to end
 node verify_browser.js    # headless Chromium, bare and under CSP
 node verify_deploy.js     # serves dist/: offline install, and redeploy reaching a user
+python3 verify_pwa.py     # the same two claims, against a server that is actually dead
 
 python3 build_payload.py  # regenerate payload.b64 after changing vocab.py
 python3 -c "open('anagrind.html','w').write(open('ui.template.html').read().replace('__PAYLOAD__', open('payload.b64').read().strip()))"
@@ -204,6 +217,16 @@ floor would delete exactly the entries UKACD exists to supply; the fix is
 presentation, not exclusion.
 
 ## When there is no answer
+
+**The web UI does not show this.** `DIAGNOSTICS` in `ui.template.html` is
+`false`, which hides the section and, just as importantly, keeps it off the
+automatic path: `letter_near_misses` costs ~420 ms on its first call and the
+section ran on every empty result, so leaving it merely invisible would keep
+paying for a thing nobody sees. Nothing is deleted — `diagnose()`,
+`renderSuggestions()` and their styles are intact and still covered by
+`test_solver.py`. Set the flag to `true`, run `python3 build_dist.py`, and the
+section is back; that is the entire procedure. The CLI and `/api/diagnose` are
+unaffected and still return suggestions.
 
 An empty result looks the same whether the dictionary lacks the answer or the
 solver was handed the wrong letters. In practice the second is far more common,

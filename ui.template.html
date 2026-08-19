@@ -522,6 +522,16 @@ const BAND_WHY = [
 let showUnattested = false, ready = false, seq = 0;
 const REMOTE = !PAYLOAD;   // Django serves the page with no payload embedded
 
+// The empty-state diagnostics — "Did you mean", alternative shapes, near
+// misses — are hidden, not deleted. diagnose() and renderSuggestions() are
+// intact and still tested by test_solver.py; flip this to true to bring the
+// section back and nothing else has to change.
+//
+// It gates execution as well as display: letter_near_misses costs ~420 ms on
+// its first call and the section runs on every empty result, so leaving it
+// merely invisible would keep paying for a thing nobody sees.
+const DIAGNOSTICS = false;
+
 // The enumeration follows the fodder's letter count until the solver types a
 // shape of their own — then it is theirs, and a later fodder edit leaves it
 // alone and shows the disagreement instead. Emptying the field hands it back,
@@ -597,8 +607,10 @@ function render(answers, enu, ms){
       ? "No arrangement of these letters makes words of that shape."
       : "No attested answer fits these letters.";
     resultsEl.appendChild(p);
-    if (!REMOTE) renderSuggestions(diagnose(fodderEl.value, enu));
-    else fetchSuggestions(enu);
+    if (DIAGNOSTICS) {
+      if (!REMOTE) renderSuggestions(diagnose(fodderEl.value, enu));
+      else fetchSuggestions(enu);
+    }
     if (!showUnattested && enu.lengths.length > 1) resultsEl.appendChild(moreButton());
     return;
   }
