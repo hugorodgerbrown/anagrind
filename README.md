@@ -100,7 +100,8 @@ modes, chosen by the tabs at the top.
 **Anagrind** is the one above: fodder in, real answers out.
 
 **Word finder** is the other one — a half-filled grid entry rather than letters
-to rearrange. Type what you have and leave the rest blank:
+to rearrange. The input *is* the grid: fifteen squares, and you type from square
+one.
 
 ```
 r_c_n_l_        ->  recently
@@ -113,6 +114,16 @@ reach for; all three mean one unknown letter. A **comma or hyphen is a word
 break**, and that is the whole reason there is no enumeration field in this
 mode: `t_k_,o_t` already says (4,3) and `t_k_-o_t` already says 4-3. An
 enumeration typed next to a pattern could only ever agree with it or be wrong.
+
+Word breaks sit *between* squares rather than taking one, so a fifteen-square
+row still holds `10,5`. The entry is as long as you have typed, not fifteen:
+squares past the caret are unclaimed, which is what keeps `r_c_n_l_` eight long
+and not eight-plus-seven-unknowns. Clicking an answer fills the blanks in the
+squares you typed into, without disturbing the pattern or the list.
+
+Under the squares is a real `<input>`, invisible and covering them, so the
+phone keyboard, paste and IME all still work and the grid stays a rendering of
+its value. Clicking a square moves the caret there.
 
 Space is a blank rather than a word break because in this mode you are filling
 in squares, and the break between words is what the comma is for.

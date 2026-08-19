@@ -1,4 +1,4 @@
-const CACHE = "anagrind-6d7d19762783";
+const CACHE = "anagrind-d5dae3e58c28";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest",
                 "./icon-180.png", "./icon-192.png", "./icon-512.png",
                 "./icon-maskable.png"];

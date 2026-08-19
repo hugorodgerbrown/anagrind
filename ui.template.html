@@ -33,6 +33,9 @@
   }
 }
 *{box-sizing:border-box}
+/* An author `display` beats the UA stylesheet's [hidden] rule, and .tray
+   sets display:flex — so hiding it needs saying explicitly. */
+[hidden]{display:none !important}
 body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
   font-size:16px;line-height:1.5;-webkit-text-size-adjust:100%}
 .wrap{max-width:620px;margin:0 auto;padding:22px 18px 56px}
@@ -53,6 +56,25 @@ input:focus{border-color:var(--ranked)}
 .field.err input,.field.err input:focus{border-color:var(--err)}
 .field.err label{color:var(--err)}
 .hint.err{color:var(--err)}
+
+/* The pattern grid: fifteen squares, because that is a crossword entry. You
+   type from square one; everything past the caret is a square you have not
+   claimed yet, which is what keeps 'r_c_n_l_' eight long and not fifteen. */
+.gridwrap{position:relative}
+.gridwrap input{position:absolute;inset:0;width:100%;height:100%;opacity:0;
+  pointer-events:none;font-size:16px;border:0;padding:0;margin:0}
+.grid{display:flex;flex-wrap:wrap;gap:4px;padding:12px;cursor:text;
+  background:var(--sunk);border:1px solid var(--rule);border-radius:8px}
+.gridwrap:focus-within .grid{border-color:var(--ranked)}
+.sq{width:28px;height:34px;display:grid;place-items:center;border-radius:4px;
+  font-family:var(--mono);font-size:15px;text-transform:uppercase;
+  background:var(--panel);border:1px solid var(--rule)}
+.sq.idle{background:transparent;border-style:solid;opacity:.35}
+.sq.blank{background:transparent;border-style:dashed;color:var(--dim)}
+.sq.caret{border-color:var(--ranked);box-shadow:inset 0 0 0 1px var(--ranked)}
+.sq.found{animation:land .34s cubic-bezier(.22,1,.36,1)}
+@keyframes land{from{transform:scale(.72);opacity:.4}to{transform:scale(1);opacity:1}}
+@media (prefers-reduced-motion:reduce){.sq.found{animation:none}}
 
 .tabs{display:flex;gap:2px;margin-bottom:18px;border-bottom:1px solid var(--rule)}
 .tab{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);
@@ -126,8 +148,16 @@ input:focus{border-color:var(--ranked)}
   </div>
   <div class="field" id="pattern-field" hidden>
     <label for="pattern">Pattern</label>
-    <input id="pattern" placeholder="r_c_n_l_" autocomplete="off"
-           autocapitalize="off" autocorrect="off" spellcheck="false">
+    <!-- The squares are the input. A real <input> sits invisibly on top of
+         them so the phone keyboard, paste and IME all still work; everything
+         you see is drawn from its value. -->
+    <div class="gridwrap">
+      <div class="grid" id="grid"></div>
+      <input id="pattern" autocomplete="off" autocapitalize="off"
+             autocorrect="off" spellcheck="false" inputmode="text"
+             aria-label="Pattern. Type letters, space for an unknown square,
+                         comma or hyphen for a word break.">
+    </div>
   </div>
   <div class="field" id="enum-field">
     <label for="enum">Enumeration</label>
@@ -621,31 +651,70 @@ function flip(before){
   }
 }
 
-/** The tray in word finder mode: one square per position, blanks included,
- *  already grouped by the word breaks the pattern states. */
-function renderPattern(pat){
-  trayEl.classList.toggle("empty", !pat.total);
-  trayEl.textContent = "";
-  tiles = [];
-  pat.words.forEach((slot, i) => {
-    if (i) {
+/* ---------------------------------------------------------------------- *
+ * The pattern grid. The squares are the control, not a preview of one.
+ * ---------------------------------------------------------------------- */
+const SQUARES = 15;                       // a crossword entry, and the cap
+const gridEl = document.getElementById("grid");
+let revealed = null;                      // an answer being shown in the grid
+
+/** Walk the pattern text into what the grid draws: squares and word breaks,
+ *  each remembering where it came from so a click can put the caret there. */
+function layout(text){
+  const cells = [];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "," || ch === "-") cells.push({break: true, sep: ch, at: i});
+    else cells.push({break: false, ch: BLANK_CHARS.includes(ch) ? "" : ch, at: i});
+  }
+  return cells;
+}
+
+const squareCount = cells => cells.reduce((n, c) => n + !c.break, 0);
+
+/** Square index -> position in the text, for click-to-caret. */
+function textIndexOfSquare(cells, square){
+  let seen = 0;
+  for (const cell of cells) {
+    if (cell.break) continue;
+    if (seen === square) return cell.at;
+    seen++;
+  }
+  return null;
+}
+
+function renderGrid(){
+  const cells = layout(patternEl.value);
+  const caretSquare = squareCount(layout(patternEl.value.slice(0, patternEl.selectionStart ?? 0)));
+  const focused = document.activeElement === patternEl;
+  // A revealed answer is drawn over the squares without touching the pattern,
+  // so the list stays put and the next keystroke brings the blanks back.
+  const letters = revealed ? [...revealed.parts.join("")] : null;
+
+  gridEl.textContent = "";
+  let square = 0;
+  for (const cell of cells) {
+    if (cell.break) {
       const gap = document.createElement("div");
-      gap.className = (pat.seps[i - 1] === "-") ? "gap hyphen" : "gap";
-      trayEl.appendChild(gap);
+      gap.className = cell.sep === "-" ? "gap hyphen" : "gap";
+      gridEl.appendChild(gap);
+      continue;
     }
-    const group = document.createElement("div");
-    group.className = "word";
-    for (const ch of slot) {
-      const tile = document.createElement("div");
-      const blank = ch === BLANK;
-      tile.className = blank ? "tile blank" : "tile";
-      tile.textContent = blank ? "" : ch;
-      tile.dataset.letter = blank ? "" : ch;
-      group.appendChild(tile);
-      tiles.push(tile);
-    }
-    trayEl.appendChild(group);
-  });
+    const box = document.createElement("div");
+    const shown = cell.ch || (letters ? letters[square] || "" : "");
+    box.className = "sq" + (cell.ch ? "" : shown ? " found" : " blank")
+                  + (focused && square === caretSquare ? " caret" : "");
+    box.textContent = shown;
+    box.dataset.square = square;
+    gridEl.appendChild(box);
+    square++;
+  }
+  for (let i = square; i < SQUARES; i++) {
+    const box = document.createElement("div");
+    box.className = "sq idle" + (focused && i === caretSquare ? " caret" : "");
+    box.dataset.square = i;
+    gridEl.appendChild(box);
+  }
 }
 
 /** Fill the blanks with a chosen answer. Tiles are matched by position, not by
@@ -733,7 +802,10 @@ function setMode(next){
     tab.setAttribute("aria-selected", String(name === mode));
   for (const [name, field] of Object.entries(FIELDS))
     field.box.hidden = name !== mode;
-  trayEl.dataset.empty = FIELDS[mode].empty;
+  // One row of squares, not two: in word finder the grid you type into is the
+  // tray, so the tray below would only ever be a copy of it.
+  trayEl.hidden = mode === "finder";
+  revealed = null;
   // The pattern states its own shape, so there is nothing to enter here.
   enumField().hidden = mode === "finder";
   enumField().classList.remove("err");
@@ -792,11 +864,16 @@ async function refreshFinder(){
 
   countEl.classList.remove("over");
   countEl.textContent = pat.total ? String(pat.total) : "\u2014";
-  renderPattern(pat);
+  renderGrid();
   resultsEl.textContent = "";
   hintEl.classList.remove("err");
 
-  if (!pat.total) { hintEl.textContent = ""; return; }
+  if (!pat.total) {
+    // There is no placeholder to lean on once the input is a row of squares.
+    hintEl.textContent = "Type letters \u00b7 space for a square you do not know "
+                       + "\u00b7 comma or hyphen for a word break";
+    return;
+  }
   if (pat.open) {
     // Every square blank matches the whole dictionary, which is not an answer.
     hintEl.textContent = "Add at least one known letter";
@@ -904,7 +981,7 @@ function render(answers, enu, ms){
     btn.addEventListener("click", () => {
       for (const el of resultsEl.querySelectorAll(".answer")) el.setAttribute("aria-current", "false");
       btn.setAttribute("aria-current", "true");
-      if (mode === "finder") revealInto(a.parts, a.seps || enu.seps);
+      if (mode === "finder") { revealed = a; renderGrid(); }
       else arrangeInto(a.parts, enu.seps);
     });
     group.appendChild(btn);
@@ -978,7 +1055,48 @@ function queue(){
   timer = setTimeout(refresh, 90);
 }
 fodderEl.addEventListener("input", () => { trackFodder(); queue(); });
-patternEl.addEventListener("input", queue);
+
+// Only the pattern alphabet reaches the value, so the grid never has to draw a
+// character it has no square for.
+patternEl.addEventListener("input", () => {
+  const caret = patternEl.selectionStart ?? patternEl.value.length;
+  const before = patternEl.value;
+  let clean = before.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+                    .replace(/[^a-z ,\-_?]/g, "");
+  // Fifteen squares is the whole row. Word breaks are free — they sit between
+  // squares rather than taking one.
+  const cells = layout(clean);
+  if (squareCount(cells) > SQUARES) {
+    const cut = textIndexOfSquare(cells, SQUARES);
+    clean = clean.slice(0, cut === null ? clean.length : cut);
+  }
+  if (clean !== before) {
+    patternEl.value = clean;
+    const shift = before.length - clean.length;
+    const at = Math.max(0, Math.min(clean.length, caret - shift));
+    patternEl.setSelectionRange(at, at);
+  }
+  revealed = null;
+  renderGrid();
+  queue();
+});
+
+// The caret is drawn, so anything that moves it has to redraw it.
+for (const event of ["keyup", "click", "focus", "blur", "select"])
+  patternEl.addEventListener(event, renderGrid);
+
+// The grid is the control: a tap on a square puts the caret in that square.
+gridEl.addEventListener("mousedown", event => {
+  const box = event.target.closest(".sq");
+  event.preventDefault();
+  patternEl.focus();
+  if (!box) return;
+  const cells = layout(patternEl.value);
+  const at = textIndexOfSquare(cells, +box.dataset.square);
+  const pos = at === null ? patternEl.value.length : at;
+  patternEl.setSelectionRange(pos, pos);
+  renderGrid();
+});
 for (const [name, tab] of Object.entries(tabs))
   tab.addEventListener("click", () => setMode(name));
 enumEl.addEventListener("input", () => {
