@@ -23,13 +23,13 @@
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   --bg:#fbfbfa; --panel:#ffffff; --sunk:#f4f4f2; --rule:#e2e2de;
   --text:#1a1a19; --dim:#6d6d68;
-  --ranked:#17795e; --unranked:#9a6600; --unattested:#8b8b85;
+  --ranked:#17795e; --unranked:#9a6600; --unattested:#8b8b85; --err:#b3261e;
 }
 @media (prefers-color-scheme:dark){
   :root{
     --bg:#16171a; --panel:#1e2024; --sunk:#111214; --rule:#2e3136;
     --text:#ececea; --dim:#95958f;
-    --ranked:#4fc9a0; --unranked:#e2a343; --unattested:#84847e;
+    --ranked:#4fc9a0; --unranked:#e2a343; --unattested:#84847e; --err:#f2857c;
   }
 }
 *{box-sizing:border-box}
@@ -41,13 +41,18 @@ header{display:flex;align-items:baseline;justify-content:space-between;margin-bo
 .mark{font-size:19px;font-weight:600;letter-spacing:-.01em}
 .count{font-family:var(--mono);font-size:13px;color:var(--dim)}
 .count b{color:var(--text);font-weight:600}
-.count.over b{color:var(--unranked)}
+.count.over b{color:var(--err)}
 
 label{display:block;font-size:12px;color:var(--dim);margin-bottom:5px}
 .field{margin-bottom:12px}
 input{width:100%;background:var(--panel);border:1px solid var(--rule);border-radius:8px;
   color:var(--text);font-family:var(--mono);font-size:16px;padding:12px 13px;outline:none}
 input:focus{border-color:var(--ranked)}
+/* The enumeration disagrees with the letters in the fodder. Shown, not
+   corrected: the count is a guess and the solver's own shape outranks it. */
+.field.err input,.field.err input:focus{border-color:var(--err)}
+.field.err label{color:var(--err)}
+.hint.err{color:var(--err)}
 
 .tray{min-height:64px;margin:16px 0 6px;padding:12px;background:var(--sunk);
   border-radius:8px;display:flex;flex-wrap:wrap;align-items:center;gap:4px}
@@ -107,7 +112,8 @@ input:focus{border-color:var(--ranked)}
   </div>
   <div class="field">
     <label for="enum">Enumeration</label>
-    <input id="enum" placeholder="10,5" autocomplete="off" inputmode="text" spellcheck="false">
+    <input id="enum" placeholder="10,5" autocomplete="off" inputmode="text" spellcheck="false"
+           aria-describedby="hint">
   </div>
 
   <div class="tray empty" id="tray" aria-live="off"></div>
@@ -516,6 +522,20 @@ const BAND_WHY = [
 let showUnattested = false, ready = false, seq = 0;
 const REMOTE = !PAYLOAD;   // Django serves the page with no payload embedded
 
+// The enumeration follows the fodder's letter count until the solver types a
+// shape of their own — then it is theirs, and a later fodder edit leaves it
+// alone and shows the disagreement instead. Emptying the field hands it back,
+// but does not refill it until the fodder changes: refilling under a cursor
+// that is mid-edit is how you get "155" from someone retyping "15".
+let enumOwned = false;
+const enumField = () => enumEl.closest(".field");
+
+function trackFodder(){
+  if (enumOwned) return;
+  const n = norm(fodderEl.value).length;
+  enumEl.value = n ? String(n) : "";
+}
+
 /** The only fork between the standalone build and the Django service. */
 async function getAnswers(fodder, enu, all){
   if (!REMOTE) return solve(fodder, enu, all);
@@ -532,9 +552,13 @@ async function refresh(){
   const letters = norm(fodderEl.value);
   const enu = parseEnum(enumEl.value);
 
+  const mismatch = !!enu && letters.length !== enu.total;
   countEl.textContent = enu ? `${letters.length} / ${enu.total}` : `${letters.length}`;
-  countEl.classList.toggle("over", !!enu && letters.length !== enu.total);
+  countEl.classList.toggle("over", mismatch);
   if (enu) countEl.innerHTML = `<b>${letters.length}</b> / ${enu.total}`;
+  enumField().classList.toggle("err", mismatch);
+  enumEl.setAttribute("aria-invalid", mismatch ? "true" : "false");
+  hintEl.classList.toggle("err", mismatch);
 
   renderTray(letters);
   resultsEl.textContent = "";
@@ -645,6 +669,7 @@ function renderSuggestions(suggestions){
     btn.addEventListener("click", () => {
       if (s.fodder !== null && s.fodder !== undefined) fodderEl.value = s.fodder;
       if (s.enumeration) enumEl.value = s.enumeration;
+      enumOwned = true;   // the suggestion fits this shape; it is not a guess
       showUnattested = false;
       refresh();
     });
@@ -669,13 +694,16 @@ function moreButton(){
 }
 
 let timer;
-for (const el of [fodderEl, enumEl]) {
-  el.addEventListener("input", () => {
-    showUnattested = false;
-    clearTimeout(timer);
-    timer = setTimeout(refresh, 90);
-  });
+function queue(){
+  showUnattested = false;
+  clearTimeout(timer);
+  timer = setTimeout(refresh, 90);
 }
+fodderEl.addEventListener("input", () => { trackFodder(); queue(); });
+enumEl.addEventListener("input", () => {
+  enumOwned = enumEl.value.trim() !== "";
+  queue();
+});
 
 function fatal(heading, detail){
   ready = false;

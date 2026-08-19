@@ -1,6 +1,8 @@
 {
   "name": "anagrind",
   "short_name": "anagrind",
+  "lang": "en",
+  "id": "./",
   "description": "Crossword anagram solver. Fodder in, real answers out.",
   "start_url": "./",
   "scope": "./",
