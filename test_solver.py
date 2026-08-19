@@ -137,6 +137,82 @@ def test_limit_is_respected(index):
     assert len(solve("the eyes", "4,3", index, limit=3, include_unattested=True)) == 3
 
 
+# -- word finder ------------------------------------------------------------
+from solver import Pattern, find_pattern, parse_pattern  # noqa: E402
+
+
+def test_blank_is_space_underscore_or_question_mark():
+    """A solver filling squares reaches for whichever key is nearest. All three
+    mean the same thing, and none of them is a word break."""
+    assert parse_pattern("r_c_n_l_") == parse_pattern("r c n l ")
+    assert parse_pattern("r_c_n_l_") == parse_pattern("r?c?n?l?")
+
+
+def test_pattern_derives_its_own_enumeration():
+    """The separators carry the shape, so there is nothing to type twice."""
+    assert str(parse_pattern("t_k_,o_t").enumeration) == "4,3"
+    assert str(parse_pattern("t_k_-o_t").enumeration) == "4-3"
+    assert str(parse_pattern("r_c_n_l_").enumeration) == "8"
+
+
+def test_trailing_blank_counts():
+    """'r_c_n_l_' is eight squares, not seven. The last one is the point."""
+    assert parse_pattern("r_c_n_l_").total == 8
+    assert parse_pattern("r c n l ").total == 8
+
+
+def test_pattern_finds_the_word(index):
+    answers = find_pattern("r_c_n_l_", index)
+    assert "recently" in [a.text for a in answers]
+
+
+def test_pattern_finds_a_phrase_by_its_derived_shape(index):
+    answers = find_pattern("s_t_r_t_o_,p_i_t", index)
+    assert answers[0].text == "saturation point"
+    assert answers[0].tier == TIER_PHRASE
+
+
+def test_pattern_honours_the_hyphen(index):
+    """'take out' and 'take-out' are both attested and dedupe to one answer, so
+    a pattern that states the hyphen has to get the hyphenated one — and a
+    pattern that states a comma still finds it, the same trade solve() makes."""
+    assert [a.text for a in find_pattern("t_k_-o_t", index)] == ["take-out"]
+    assert [a.text for a in find_pattern("t_k_,o_t", index)] == ["take out"]
+
+
+def test_pattern_rejects_a_letter_in_the_wrong_square(index):
+    """The whole value of a pattern is positional. A word that merely has the
+    right letters must not come back."""
+    assert "recently" not in [a.text for a in find_pattern("_r_c_n_l", index)]
+
+
+def test_pattern_respects_length(index):
+    assert all(len(a.text.replace(" ", "").replace("-", "")) == 8
+               for a in find_pattern("r_______", index, limit=50))
+
+
+def test_pattern_bands_match_the_solver(index):
+    """Same evidence rule as solve(): ranked before unranked, never blended."""
+    answers = find_pattern("________", index, limit=50)
+    assert answers == sorted(answers, key=lambda a: (a.band, -a.score, a.text))
+    assert answers[0].band == BAND_RANKED
+
+
+def test_open_pattern_is_flagged_not_special_cased():
+    """All blanks is a legal pattern that matches the entire dictionary. The
+    caller decides whether to run it; the parser just says so."""
+    assert parse_pattern("____").is_open
+    assert not parse_pattern("r___").is_open
+
+
+def test_empty_pattern_finds_nothing(index):
+    assert find_pattern("", index) == []
+
+
+def test_pattern_limit_is_respected(index):
+    assert len(find_pattern("________", index, limit=5)) == 5
+
+
 # -- diagnostics ------------------------------------------------------------
 from solver import alternative_shapes, diagnose, letter_near_misses, word_swaps  # noqa: E402
 

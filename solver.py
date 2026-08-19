@@ -120,6 +120,97 @@ def parse_enumeration(text: str) -> Enumeration:
 
 
 # --------------------------------------------------------------------------
+# Pattern  ("r_c_n_l_" / "t_k_,o_t" / "t_k_-o_t")
+#
+# The other way a solver arrives at a crossword: not with fodder to rearrange
+# but with a half-filled grid entry and a shape. A blank is a space, an
+# underscore or a question mark — whichever the solver's hands reach for.
+#
+# The separators carry the enumeration, so there is nothing to type twice:
+# 't_k_,o_t' is (4,3) and 't_k_-o_t' is 4-3. An enumeration entered next to a
+# pattern could only ever agree with it or be wrong.
+# --------------------------------------------------------------------------
+
+BLANK = "."          # one unknown letter, in the compiled form
+_BLANK_CHARS = " _?"
+
+
+@dataclass(frozen=True)
+class Pattern:
+    """Known letters and gaps, already split into words."""
+
+    words: tuple[str, ...]           # each character is a-z or BLANK
+    separators: tuple[str, ...]      # len == len(words) - 1; " " or "-"
+
+    @property
+    def total(self) -> int:
+        return sum(len(w) for w in self.words)
+
+    @property
+    def enumeration(self) -> Enumeration:
+        """The shape this pattern states. Derived, never entered."""
+        return Enumeration(tuple(len(w) for w in self.words), self.separators)
+
+    @property
+    def is_open(self) -> bool:
+        """Nothing known at all — every position blank."""
+        return all(c == BLANK for w in self.words for c in w)
+
+    def matches(self, words: Sequence[str]) -> bool:
+        if len(words) != len(self.words):
+            return False
+        return all(
+            len(word) == len(slot)
+            and all(c == BLANK or c == letter for c, letter in zip(slot, word))
+            for slot, word in zip(self.words, words)
+        )
+
+    def __str__(self) -> str:
+        out = self.words[0] if self.words else ""
+        for sep, word in zip(self.separators, self.words[1:]):
+            out += sep + word
+        return out
+
+
+def parse_pattern(text: str) -> Pattern:
+    """Accepts 'r_c_n_l_', 'r c n l ', 'r?c?n?l?', 't_k_,o_t', 't_k_-o_t'.
+
+    Space is a blank, not a word break: a solver typing a pattern is filling
+    in squares, and the break between words is what the comma is for.
+    """
+    words: list[str] = []
+    separators: list[str] = []
+    current: list[str] = []
+    pending: str | None = None
+
+    for char in normalise_keep_shape(text):
+        if char in ",-":
+            if current:
+                if words:
+                    separators.append(pending or " ")
+                words.append("".join(current))
+                current = []
+                pending = "-" if char == "-" else " "
+            continue
+        current.append(BLANK if char in _BLANK_CHARS else char)
+
+    if current:
+        if words:
+            separators.append(pending or " ")
+        words.append("".join(current))
+    return Pattern(tuple(words), tuple(separators))
+
+
+def normalise_keep_shape(text: str) -> str:
+    """normalise(), but blanks and separators survive — they are the pattern."""
+    stripped = unicodedata.normalize("NFKD", text).lower()
+    return "".join(
+        c for c in stripped
+        if c.isascii() and (c.isalpha() or c in _BLANK_CHARS or c in ",-")
+    )
+
+
+# --------------------------------------------------------------------------
 # Bands and tiers
 # --------------------------------------------------------------------------
 
@@ -376,6 +467,70 @@ def solve(
             for slot, word in zip(order, combo):
                 restored[slot] = word
             add(tuple(restored), TIER_COMBO)
+
+    answers.sort(key=lambda a: (a.band, -a.score, a.text))
+    return answers[:limit]
+
+
+def find_pattern(
+    pattern: str | Pattern,
+    index: Index,
+    limit: int = 25,
+) -> list[Answer]:
+    """Find attested entries whose letters fit the pattern.
+
+    Same bands and same ordering as solve(): evidence first, and never traded
+    off against score. There is no unattested tier here — a pattern with no
+    match has no legal split to fall back on, only a wrong grid.
+    """
+    pat = pattern if isinstance(pattern, Pattern) else parse_pattern(pattern)
+    if not pat.words:
+        return []
+
+    enum = pat.enumeration
+    answers: list[Answer] = []
+    seen: set[tuple[str, ...]] = set()
+
+    def add(words: tuple[str, ...], tier: str, separators: Sequence[str] = ()) -> None:
+        if words in seen:
+            return
+        seen.add(words)
+        answers.append(
+            Answer(
+                text=enum.render(words, separators),
+                words=words,
+                tier=tier,
+                band=index.band(words, tier),
+                score=index.score(words),
+            )
+        )
+
+    if len(pat.words) == 1:
+        slot = pat.words[0]
+        for bucket in index.words_by_key.get(len(slot), {}).values():
+            for word in bucket:
+                if pat.matches((word,)):
+                    add((word,), TIER_WORD)
+    else:
+        matched: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+        for (_, lengths), entries in index.phrases_by_key.items():
+            if lengths != enum.lengths:
+                continue
+            matched += [(w, s) for w, s in entries if pat.matches(w)]
+
+        # Same rule as solve(): if the pattern says where the hyphen goes,
+        # honour it — but only if something matches, since a solver typing a
+        # comma is not asserting there is no hyphen.
+        if enum.specifies_separators:
+            exact = [m for m in matched if m[1] == enum.separators]
+            matched = exact or matched
+
+        # 'take out' and 'take-out' are both attested and dedupe to the same
+        # words, so without an order the winner is whichever the index happened
+        # to yield first — and the browser picked the other one.
+        matched.sort(key=lambda m: ("".join(m[1]), m[0]))
+        for words, separators in matched:
+            add(words, TIER_PHRASE, separators)
 
     answers.sort(key=lambda a: (a.band, -a.score, a.text))
     return answers[:limit]
