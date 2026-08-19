@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "anagrind",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8137", "--directory", "dist"],
+      "port": 8137,
+      "url": "http://localhost:8137"
+    }
+  ]
+}

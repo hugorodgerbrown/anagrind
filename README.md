@@ -16,6 +16,18 @@ $ ./solve.py "on a train, up to its" "10,5"
 `dist/` is an installable web app: manifest, icons, and a service worker that
 precaches everything. It is 2.2 MB of static files with no backend.
 
+**Testing it locally.** `.claude/launch.json` serves `dist/` on
+<http://localhost:8137>, which is a secure origin, so the service worker
+registers exactly as it does in production:
+
+```bash
+python3 -m http.server 8137 --directory dist
+```
+
+Load it once, then stop the server and reload: the app should still solve.
+That is the whole claim, and it is the only way to check it — a service worker
+never registers over `file://`.
+
 **Deploying to Render.** `dist/` is committed and `render.yaml` publishes it with
 an empty build command, so the deploy has nothing to break: no Python on the
 build image, no pip install, no 30-second vocabulary build. New → Static Site →
@@ -43,8 +55,12 @@ Then, on the phone:
 
 It opens without browser chrome, follows the system light/dark setting, and
 **works with no signal at all** once installed. That last part is not incidental:
-a crossword solver is used on trains. `sw.js` precaches the six assets on first
-visit, and the offline reload is asserted in the browser tests.
+a crossword solver is used on trains. `sw.js` precaches every file it serves —
+the page, the manifest and all four icons — on first visit, so nothing the page
+asks for on load can reach for a network that is not there. A navigation to a
+URL that was never cached falls back to the app itself rather than the browser's
+offline error, since every URL here is the same single page. The offline reload
+is asserted in the browser tests.
 
 The worker is cache-first, which means a stale cache would serve the old app
 forever. Its cache name carries a hash of the built page, so a deploy that
@@ -146,6 +162,20 @@ and is labelled unattested in the output.
 
 Hyphens are carried through: `4-3` renders `take-out`, while a loose `4,3`
 still finds it, because solvers type the comma out of habit.
+
+### The enumeration follows the fodder until you disagree with it
+
+Typing fodder fills the enumeration with its letter count — `on` → `2`,
+`on a tra` → `6`, `on a train, up to its` → `15`, counting `a-z` only. That is
+the shape of a one-word answer, which is a guess, so the moment you type a
+shape of your own it is yours: later fodder edits leave it alone and the
+mismatch is shown as an error on the field rather than silently corrected. A
+clue's enumeration is evidence and our letter count is arithmetic; the same
+rule as the answer bands, which never trade a band off against a score.
+
+Emptying the field hands it back, but it does not refill until the fodder
+changes next — refilling under a cursor that is mid-edit is how someone
+retyping `15` ends up with `155`.
 
 ### Three bands, because our sources disagree about what they know
 

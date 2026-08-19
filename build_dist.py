@@ -79,6 +79,8 @@ def read_payload() -> str:
 MANIFEST = """{
   "name": "anagrind",
   "short_name": "anagrind",
+  "lang": "en",
+  "id": "./",
   "description": "Crossword anagram solver. Fodder in, real answers out.",
   "start_url": "./",
   "scope": "./",
@@ -94,13 +96,16 @@ MANIFEST = """{
 """
 
 # Cache-first: the dictionary does not change between deploys, and the whole
-# point is that it works on a train with no signal.
+# point is that it works on a train with no signal. ASSETS is every file in
+# dist/ except sw.js itself — including icon-180.png, which the page requests
+# on load as its apple-touch-icon.
 #
 # CACHE carries a hash of the built page. Without it a cache-first worker serves
 # the old app forever, because it never asks the network what changed.
 SERVICE_WORKER = """const CACHE = "anagrind-__BUILD__";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest",
-                "./icon-192.png", "./icon-512.png", "./icon-maskable.png"];
+                "./icon-180.png", "./icon-192.png", "./icon-512.png",
+                "./icon-maskable.png"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -116,7 +121,13 @@ self.addEventListener("fetch", event => {
   if (event.request.method !== "GET") return;
   event.respondWith(
     caches.match(event.request, {ignoreSearch: true})
-      .then(hit => hit || fetch(event.request))
+      .then(hit => hit || fetch(event.request).catch(err => {
+        // Offline, and the URL is not one we precached. Every navigation here
+        // is the same single page, so serve it rather than the browser's
+        // offline error. Subresources keep failing, which is what they mean.
+        if (event.request.mode === "navigate") return caches.match("./");
+        throw err;
+      }))
   );
 });
 """
