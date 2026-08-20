@@ -1103,6 +1103,36 @@ patternEl.addEventListener("input", () => {
   queue();
 });
 
+// Typing fills the square you are on and moves to the next, rather than
+// pushing a new square in front of it — the caret is a highlighted square, so
+// a keystroke has to land *in* it. Past the last square there is nothing to
+// overwrite and typing appends, which is how the row grows in the first place.
+//
+// Word breaks are the exception: a comma sits between two squares rather than
+// in one, so it still inserts. beforeinput, because it is the only hook that
+// sees the character before the field has changed.
+patternEl.addEventListener("beforeinput", event => {
+  if (event.inputType !== "insertText" || event.data === null) return;
+  if (event.data.length !== 1) return;                              // a paste inserts
+  if (patternEl.selectionStart !== patternEl.selectionEnd) return;  // a selection replaces itself
+
+  const ch = event.data.toLowerCase();
+  if (ch === "," || ch === "-") return;
+  if (!/[a-z]/.test(ch) && !BLANK_CHARS.includes(ch)) return;       // junk: the input handler strips it
+
+  const value = patternEl.value;
+  const here = squareCount(layout(value.slice(0, patternEl.selectionStart)));
+  const at = textIndexOfSquare(layout(value), here);
+  if (at === null) return;                                          // past the row: let it append
+
+  event.preventDefault();
+  patternEl.value = value.slice(0, at) + ch + value.slice(at + 1);
+  const next = textIndexOfSquare(layout(patternEl.value), here + 1);
+  const pos = next === null ? patternEl.value.length : next;
+  patternEl.setSelectionRange(pos, pos);
+  patternEl.dispatchEvent(new Event("input", {bubbles: true}));
+});
+
 // Backspace works on the square you are on, not the gap behind it. The caret
 // is drawn as a highlighted square, so that square is what a delete has to
 // mean — a text input's own backspace takes the character before the caret,

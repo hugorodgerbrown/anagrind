@@ -131,6 +131,13 @@ Under the squares is a real `<input>`, invisible and covering them, so the
 phone keyboard, paste and IME all still work and the grid stays a rendering of
 its value. Clicking a square moves the caret there.
 
+The highlighted square is what the keyboard acts on, in both directions: a
+letter **fills that square** and moves to the next rather than pushing the row
+along, and backspace **clears that square** and steps back. Past the last
+square there is nothing to overwrite, so typing appends and the row grows —
+which is how you enter one in the first place. Word breaks are the exception
+and still insert, because a comma sits between two squares rather than in one.
+
 Space is a blank rather than a word break because in this mode you are filling
 in squares, and the break between words is what the comma is for.
 
