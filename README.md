@@ -115,8 +115,11 @@ break**, and that is the whole reason there is no enumeration field in this
 mode: `t_k_,o_t` already says (4,3) and `t_k_-o_t` already says 4-3. An
 enumeration typed next to a pattern could only ever agree with it or be wrong.
 
-A blank square draws the underscore you typed for it, so the row reads back as
-what you entered and cannot be mistaken for a square you never reached.
+A blank square draws a question mark — one of the characters you can type for
+one — so the row reads back as what you entered and cannot be mistaken for a
+square you never reached. Not the open box `␣`, which is the right symbol
+and missing from several phone monospace fonts; tofu inside a crossword square
+reads as a filled-in letter.
 
 Word breaks sit *between* squares rather than taking one, so a fifteen-square
 row still holds `10,5`. The entry is as long as you have typed, not fifteen:
