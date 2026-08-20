@@ -115,8 +115,11 @@ break**, and that is the whole reason there is no enumeration field in this
 mode: `t_k_,o_t` already says (4,3) and `t_k_-o_t` already says 4-3. An
 enumeration typed next to a pattern could only ever agree with it or be wrong.
 
-A blank square draws the underscore you typed for it, so the row reads back as
-what you entered and cannot be mistaken for a square you never reached.
+A blank square draws a question mark — one of the characters you can type for
+one — so the row reads back as what you entered and cannot be mistaken for a
+square you never reached. Not the open box `␣`, which is the right symbol
+and missing from several phone monospace fonts; tofu inside a crossword square
+reads as a filled-in letter.
 
 Word breaks sit *between* squares rather than taking one, so a fifteen-square
 row still holds `10,5`. The entry is as long as you have typed, not fifteen:
@@ -127,6 +130,13 @@ squares you typed into, without disturbing the pattern or the list.
 Under the squares is a real `<input>`, invisible and covering them, so the
 phone keyboard, paste and IME all still work and the grid stays a rendering of
 its value. Clicking a square moves the caret there.
+
+The highlighted square is what the keyboard acts on, in both directions: a
+letter **fills that square** and moves to the next rather than pushing the row
+along, and backspace **clears that square** and steps back. Past the last
+square there is nothing to overwrite, so typing appends and the row grows —
+which is how you enter one in the first place. Word breaks are the exception
+and still insert, because a comma sits between two squares rather than in one.
 
 Space is a blank rather than a word break because in this mode you are filling
 in squares, and the break between words is what the comma is for.

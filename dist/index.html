@@ -38,7 +38,22 @@
 [hidden]{display:none !important}
 body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
   font-size:16px;line-height:1.5;-webkit-text-size-adjust:100%}
-.wrap{max-width:620px;margin:0 auto;padding:22px 18px 56px}
+/* viewport-fit=cover plus a translucent status bar means the page owns the
+   whole screen, notch included — so the insets are ours to add back. Without
+   them the header sits under the status bar once installed, which is exactly
+   where it is least readable. env() is 0 in a browser tab, so this costs
+   nothing there. */
+.wrap{max-width:620px;margin:0 auto;padding:22px 18px 56px;
+  padding-top:calc(22px + env(safe-area-inset-top, 0px));
+  padding-right:calc(18px + env(safe-area-inset-right, 0px));
+  padding-bottom:calc(56px + env(safe-area-inset-bottom, 0px));
+  padding-left:calc(18px + env(safe-area-inset-left, 0px))}
+
+/* Installed there is no browser chrome above the page to give it any air of
+   its own, so it needs a little more than the inset alone. */
+@media (display-mode:standalone){
+  .wrap{padding-top:calc(36px + env(safe-area-inset-top, 0px))}
+}
 
 header{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:20px}
 .mark{font-size:19px;font-weight:600;letter-spacing:-.01em}
@@ -70,13 +85,14 @@ input:focus{border-color:var(--ranked)}
   font-family:var(--mono);font-size:15px;text-transform:uppercase;
   background:var(--panel);border:1px solid var(--rule)}
 .sq.idle{background:transparent;border-style:solid;opacity:.35}
-/* A square you claimed but cannot fill. Drawn with the same underscore you
-   type for it, so the row reads back as what you entered — and so it cannot be
-   mistaken for an idle square you never reached. Drawn in CSS rather than as
-   text: the square's textContent stays the letter, or nothing. */
+/* A square you claimed but cannot fill. A question mark: it is one of the
+   characters you can type for a blank, so the row reads back as what you
+   entered, and unlike the open box U+2423 it is in every font on every phone.
+
+   In CSS rather than as text: the square's textContent stays the letter, or
+   nothing, so the reveal path and anything reading the DOM see no change. */
 .sq.blank{background:transparent;border-style:dashed;color:var(--dim)}
-.sq.blank::before{content:"_";display:block;line-height:1;transform:translateY(-3px);
-  opacity:.8}
+.sq.blank::before{content:"?";opacity:.75}
 .sq.caret{border-color:var(--ranked);box-shadow:inset 0 0 0 1px var(--ranked)}
 .sq.found{animation:land .34s cubic-bezier(.22,1,.36,1)}
 @keyframes land{from{transform:scale(.72);opacity:.4}to{transform:scale(1);opacity:1}}
@@ -1085,6 +1101,36 @@ patternEl.addEventListener("input", () => {
   revealed = null;
   renderGrid();
   queue();
+});
+
+// Typing fills the square you are on and moves to the next, rather than
+// pushing a new square in front of it — the caret is a highlighted square, so
+// a keystroke has to land *in* it. Past the last square there is nothing to
+// overwrite and typing appends, which is how the row grows in the first place.
+//
+// Word breaks are the exception: a comma sits between two squares rather than
+// in one, so it still inserts. beforeinput, because it is the only hook that
+// sees the character before the field has changed.
+patternEl.addEventListener("beforeinput", event => {
+  if (event.inputType !== "insertText" || event.data === null) return;
+  if (event.data.length !== 1) return;                              // a paste inserts
+  if (patternEl.selectionStart !== patternEl.selectionEnd) return;  // a selection replaces itself
+
+  const ch = event.data.toLowerCase();
+  if (ch === "," || ch === "-") return;
+  if (!/[a-z]/.test(ch) && !BLANK_CHARS.includes(ch)) return;       // junk: the input handler strips it
+
+  const value = patternEl.value;
+  const here = squareCount(layout(value.slice(0, patternEl.selectionStart)));
+  const at = textIndexOfSquare(layout(value), here);
+  if (at === null) return;                                          // past the row: let it append
+
+  event.preventDefault();
+  patternEl.value = value.slice(0, at) + ch + value.slice(at + 1);
+  const next = textIndexOfSquare(layout(patternEl.value), here + 1);
+  const pos = next === null ? patternEl.value.length : next;
+  patternEl.setSelectionRange(pos, pos);
+  patternEl.dispatchEvent(new Event("input", {bubbles: true}));
 });
 
 // Backspace works on the square you are on, not the gap behind it. The caret
