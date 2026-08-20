@@ -38,7 +38,22 @@
 [hidden]{display:none !important}
 body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
   font-size:16px;line-height:1.5;-webkit-text-size-adjust:100%}
-.wrap{max-width:620px;margin:0 auto;padding:22px 18px 56px}
+/* viewport-fit=cover plus a translucent status bar means the page owns the
+   whole screen, notch included — so the insets are ours to add back. Without
+   them the header sits under the status bar once installed, which is exactly
+   where it is least readable. env() is 0 in a browser tab, so this costs
+   nothing there. */
+.wrap{max-width:620px;margin:0 auto;padding:22px 18px 56px;
+  padding-top:calc(22px + env(safe-area-inset-top, 0px));
+  padding-right:calc(18px + env(safe-area-inset-right, 0px));
+  padding-bottom:calc(56px + env(safe-area-inset-bottom, 0px));
+  padding-left:calc(18px + env(safe-area-inset-left, 0px))}
+
+/* Installed there is no browser chrome above the page to give it any air of
+   its own, so it needs a little more than the inset alone. */
+@media (display-mode:standalone){
+  .wrap{padding-top:calc(36px + env(safe-area-inset-top, 0px))}
+}
 
 header{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:20px}
 .mark{font-size:19px;font-weight:600;letter-spacing:-.01em}
